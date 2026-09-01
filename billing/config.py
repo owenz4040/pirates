@@ -45,6 +45,12 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+# Render gives postgres:// but SQLAlchemy 2.0 needs postgresql+psycopg://
+if settings.database_url.startswith("postgres://"):
+    settings.database_url = settings.database_url.replace("postgres://", "postgresql+psycopg://", 1)
+elif settings.database_url.startswith("postgresql://"):
+    settings.database_url = settings.database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+
 if not settings.session_secret_key:
     import secrets
 
