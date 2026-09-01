@@ -55,11 +55,11 @@ def customers_page(
     request: Request,
     filter: str = "all",
     db: Session = Depends(get_db),
-    api: Api = Depends(get_router_api),
+    api: Api | None = Depends(get_router_api),
 ):
-    ppp = PPPoEManager(api)
+    ppp = PPPoEManager(api) if api else None
     customers = db.scalars(select(Customer)).all()
-    rows = [{"customer": c, "online": ppp.is_online(c.pppoe_username)} for c in customers]
+    rows = [{"customer": c, "online": ppp.is_online(c.pppoe_username) if ppp else False} for c in customers]
     
     stats = {
         "total": len(customers),
@@ -108,13 +108,15 @@ def create_customer(
     plan_id: int = Form(...),
     no_expiry: bool = Form(False),
     db: Session = Depends(get_db),
-    api: Api = Depends(get_router_api),
+    api: Api | None = Depends(get_router_api),
 ):
     plan = db.get(Plan, plan_id)
     if plan is None:
         return _redirect("/dashboard/customers/new", flash=f"No plan with id {plan_id}", flash_kind="error")
     if _get_customer_or_none(db, pppoe_username) is not None:
         return _redirect("/dashboard/customers/new", flash=f"{pppoe_username} already exists", flash_kind="error")
+    if not api:
+        return _redirect("/dashboard/customers/new", flash="Router is offline - cannot create customer", flash_kind="error")
     try:
         phone_number = _normalize_kenyan_phone(phone_number)
     except ValueError as exc:
@@ -150,12 +152,12 @@ def customer_page(
     username: str,
     request: Request,
     db: Session = Depends(get_db),
-    api: Api = Depends(get_router_api),
+    api: Api | None = Depends(get_router_api),
 ):
     customer = _get_customer_or_none(db, username)
     if customer is None:
         return _redirect("/dashboard", flash=f"No customer {username!r}", flash_kind="error")
-    ppp = PPPoEManager(api)
+    ppp = PPPoEManager(api) if api else None
     plans = db.scalars(select(Plan)).all()
     payments = sorted(customer.payments, key=lambda p: p.created_at, reverse=True)
     return templates.TemplateResponse(
@@ -163,7 +165,7 @@ def customer_page(
         "customer_detail.html",
         {
             "customer": customer,
-            "online": ppp.is_online(username),
+            "online": ppp.is_online(username) if ppp else False,
             "plans": plans,
             "payments": payments,
             **_flash_context(request),
@@ -172,20 +174,24 @@ def customer_page(
 
 
 @router.post("/customers/{username}/suspend")
-def suspend(username: str, db: Session = Depends(get_db), api: Api = Depends(get_router_api)):
+def suspend(username: str, db: Session = Depends(get_db), api: Api | None = Depends(get_router_api)):
     customer = _get_customer_or_none(db, username)
     if customer is None:
         return _redirect("/dashboard", flash=f"No customer {username!r}", flash_kind="error")
+    if not api:
+        return _redirect(f"/dashboard/customers/{username}", flash="Router is offline", flash_kind="error")
     ppp = PPPoEManager(api)
     services.suspend_customer(db, ppp, customer)
     return _redirect(f"/dashboard/customers/{username}", flash=f"Suspended {username}")
 
 
 @router.post("/customers/{username}/delete")
-def delete_customer(username: str, db: Session = Depends(get_db), api: Api = Depends(get_router_api)):
+def delete_customer(username: str, db: Session = Depends(get_db), api: Api | None = Depends(get_router_api)):
     customer = _get_customer_or_none(db, username)
     if customer is None:
         return _redirect("/dashboard", flash=f"No customer {username!r}", flash_kind="error")
+    if not api:
+        return _redirect(f"/dashboard/customers/{username}", flash="Router is offline", flash_kind="error")
     ppp = PPPoEManager(api)
     try:
         services.delete_customer(db, ppp, customer)
@@ -228,12 +234,14 @@ def change_plan(
     username: str,
     plan_id: int = Form(...),
     db: Session = Depends(get_db),
-    api: Api = Depends(get_router_api),
+    api: Api | None = Depends(get_router_api),
 ):
     customer = _get_customer_or_none(db, username)
     new_plan = db.get(Plan, plan_id)
     if customer is None or new_plan is None:
         return _redirect("/dashboard", flash="Customer or plan not found", flash_kind="error")
+    if not api:
+        return _redirect(f"/dashboard/customers/{username}", flash="Router is offline", flash_kind="error")
     ppp = PPPoEManager(api)
     services.change_plan(db, ppp, customer, new_plan)
     return _redirect(f"/dashboard/customers/{username}", flash=f"Moved {username} to {new_plan.name}")
@@ -245,11 +253,13 @@ def record_payment(
     amount_kes: Decimal = Form(...),
     mpesa_receipt: str = Form(""),
     db: Session = Depends(get_db),
-    api: Api = Depends(get_router_api),
+    api: Api | None = Depends(get_router_api),
 ):
     customer = _get_customer_or_none(db, username)
     if customer is None:
         return _redirect("/dashboard", flash=f"No customer {username!r}", flash_kind="error")
+    if not api:
+        return _redirect(f"/dashboard/customers/{username}", flash="Router is offline", flash_kind="error")
     ppp = PPPoEManager(api)
     payment = services.record_payment(
         db,
@@ -325,10 +335,12 @@ def create_plan(
     duration_days: int = Form(30),
     marketing_speed: str = Form(""),
     db: Session = Depends(get_db),
-    api: Api = Depends(get_router_api),
+    api: Api | None = Depends(get_router_api),
 ):
     if db.scalar(select(Plan).where(Plan.name == name)):
         return _redirect("/dashboard/plans", flash=f"Plan {name!r} already exists", flash_kind="error")
+    if not api:
+        return _redirect("/dashboard/plans", flash="Router is offline - cannot create plan", flash_kind="error")
     bw = BandwidthProfileManager(api)
     try:
         services.create_plan(
@@ -356,13 +368,15 @@ def update_plan(
     duration_days: int = Form(...),
     marketing_speed: str = Form(""),
     db: Session = Depends(get_db),
-    api: Api = Depends(get_router_api),
+    api: Api | None = Depends(get_router_api),
 ):
     plan = db.get(Plan, plan_id)
     if plan is None:
         return _redirect("/dashboard/plans", flash=f"No plan with id {plan_id}", flash_kind="error")
     if name != plan.name and db.scalar(select(Plan).where(Plan.name == name)):
         return _redirect("/dashboard/plans", flash=f"Plan {name!r} already exists", flash_kind="error")
+    if not api:
+        return _redirect("/dashboard/plans", flash="Router is offline - cannot update plan", flash_kind="error")
     old_name = plan.name
     bw = BandwidthProfileManager(api)
     try:
