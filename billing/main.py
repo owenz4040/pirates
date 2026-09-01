@@ -8,11 +8,31 @@ from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.responses import RedirectResponse  # noqa: E402
 from starlette.middleware.sessions import SessionMiddleware  # noqa: E402
 
+import asyncio
+from contextlib import asynccontextmanager
+
 from billing.auth import NotAuthenticated  # noqa: E402
 from billing.config import settings  # noqa: E402
 from billing.routers import auth, customers, dashboard, mpesa, payments, plans  # noqa: E402
 
-app = FastAPI(title="Pirates Billing API")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async def run_worker_periodically():
+        while True:
+            try:
+                from billing.worker import main as run_worker
+                await asyncio.to_thread(run_worker)
+            except Exception as e:
+                print(f"Background worker error: {e}")
+            await asyncio.sleep(3600)  # Run every hour
+
+    task = asyncio.create_task(run_worker_periodically())
+    yield
+    task.cancel()
+
+
+app = FastAPI(title="Pirates Billing API", lifespan=lifespan)
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.session_secret_key,
