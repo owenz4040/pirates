@@ -58,3 +58,8 @@ app.include_router(dashboard.router)
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/")
+def read_root():
+    return RedirectResponse("/dashboard", status_code=303)
