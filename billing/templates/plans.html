@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Plans - Pirates Billing{% endblock %}
+{% block content %}
+<h1>Plans</h1>
+
+<div class="table-wrapper">
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Rate limit</th>
+        <th>Advertised speed</th>
+        <th>Price (KES)</th>
+        <th>Duration (days)</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for plan in plans %}
+      <tr>
+        <td data-label="Name"><input form="plan-{{ plan.id }}" name="name" value="{{ plan.name }}" style="width:100%" required></td>
+        <td data-label="Rate limit"><input form="plan-{{ plan.id }}" name="rate_limit" value="{{ plan.rate_limit }}" style="width:100%" required></td>
+        <td data-label="Advertised speed"><input form="plan-{{ plan.id }}" name="marketing_speed" value="{{ plan.marketing_speed or '' }}" placeholder="e.g. 10mbps" style="width:100%"></td>
+        <td data-label="Price (KES)"><input form="plan-{{ plan.id }}" name="price_kes" type="number" step="0.01" value="{{ plan.price_kes }}" style="width:100%" required></td>
+        <td data-label="Duration (days)"><input form="plan-{{ plan.id }}" name="duration_days" type="number" value="{{ plan.duration_days }}" style="width:100%" required></td>
+        <td data-label="Action"><button form="plan-{{ plan.id }}" type="submit" class="secondary">Save</button></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">No plans yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% for plan in plans %}
+<form id="plan-{{ plan.id }}" method="post" action="/dashboard/plans/{{ plan.id }}"></form>
+{% endfor %}
+<p class="muted">Name and rate limit push straight to the matching RouterOS profile - existing customers on this plan stay correctly assigned even after a rename. Rate-limit changes apply to everyone on this plan on their next reconnect. Advertised speed is what customers see in emails (e.g. welcome/receipt) - leave it blank to auto-derive from the name instead (e.g. "isp-9m" -> "9mbps").</p>
+
+<h2>Add plan</h2>
+<div class="panel">
+  <span class="panel-title">New plan</span>
+  <p class="muted" style="margin-top:0">Creating a plan creates its RouterOS PPP profile automatically (or fixes its rate-limit if a profile with that name already exists) - no need to touch the router first.</p>
+  <form method="post" action="/dashboard/plans">
+    <div class="field-row">
+      <div>
+        <label>Name (= RouterOS profile)</label>
+        <input name="name" required>
+      </div>
+      <div>
+        <label>Rate limit</label>
+        <input name="rate_limit" placeholder="9M/9M" required>
+      </div>
+      <div>
+        <label>Advertised speed (optional)</label>
+        <input name="marketing_speed" placeholder="e.g. 10mbps">
+      </div>
+      <div>
+        <label>Price (KES)</label>
+        <input name="price_kes" type="number" step="0.01" required>
+      </div>
+      <div>
+        <label>Duration (days)</label>
+        <input name="duration_days" type="number" value="30" required>
+      </div>
+    </div>
+    <button type="submit">Create plan</button>
+  </form>
+</div>
+{% endblock %}

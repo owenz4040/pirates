@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Add Customer - Pirates Billing{% endblock %}
+{% block content %}
+<h1>Add Customer</h1>
+
+<div class="panel">
+  <span class="panel-title">New Customer Details</span>
+  <form method="post" action="/dashboard/customers">
+    <div class="field-row">
+      <div>
+        <label>PPPoE username</label>
+        <input name="pppoe_username" required>
+      </div>
+      <div>
+        <label>PPPoE password</label>
+        <input name="pppoe_password" required>
+      </div>
+      <div>
+        <label>Full name</label>
+        <input name="full_name" required>
+      </div>
+      <div>
+        <label>Phone (2547...)</label>
+        <input name="phone_number" required>
+      </div>
+      <div>
+        <label>Email (optional)</label>
+        <input name="email" type="email">
+      </div>
+      <div>
+        <label>Plan</label>
+        <select name="plan_id" required>
+          {% for plan in plans %}
+          <option value="{{ plan.id }}">{{ plan.name }} - KES {{ plan.price_kes }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    
+    <div style="margin: 20px 0 30px;">
+      <label class="checkbox-label">
+        <input type="checkbox" name="no_expiry" value="true">
+        No expiry date (For technicians and caretakers - activates immediately)
+      </label>
+    </div>
+    
+    <button type="submit">Create customer</button>
+  </form>
+</div>
+{% endblock %}

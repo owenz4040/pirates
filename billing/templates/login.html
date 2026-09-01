@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in - Pirates Billing</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root { 
+    color-scheme: dark;
+    --gold: #dfb758;
+    --gold-glow: 0 0 20px rgba(223, 183, 88, 0.4);
+    --bg: #090a0f;
+    --panel: rgba(18, 22, 33, 0.7);
+    --border: rgba(255, 255, 255, 0.08);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    background-image: 
+      radial-gradient(circle at 50% 50%, rgba(223, 183, 88, 0.05), transparent 40%),
+      repeating-linear-gradient(115deg, rgba(255,255,255,0.01) 0px, rgba(255,255,255,0.01) 1px, transparent 1px, transparent 64px);
+    font-family: 'Outfit', sans-serif;
+    padding: 20px;
+  }
+  .card {
+    width: 100%;
+    max-width: 400px;
+    background: var(--panel);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 48px 40px;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.6);
+    text-align: center;
+    animation: fadeIn 0.6s ease-out;
+  }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+  .emblem {
+    width: 64px; height: 64px; margin: 0 auto 20px;
+    border: 1.5px solid var(--gold); border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--gold); font-size: 26px;
+    box-shadow: var(--gold-glow);
+  }
+  h1 {
+    color: #f0f2f5; font-size: 24px; font-weight: 600;
+    letter-spacing: 0.03em; margin: 0 0 6px;
+  }
+  .tagline {
+    color: #949eb5; font-size: 13px; letter-spacing: 0.15em;
+    text-transform: uppercase; margin: 0 0 32px; font-weight: 500;
+  }
+  .field { text-align: left; margin-bottom: 20px; }
+  label {
+    display: block; color: #949eb5; font-size: 12px; font-weight: 600;
+    letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 8px;
+  }
+  input {
+    width: 100%; background: rgba(0,0,0,0.25); border: 1px solid var(--border); color: #f0f2f5;
+    border-radius: 10px; padding: 14px 16px; font-size: 1rem; outline: none;
+    font-family: inherit; transition: all 0.25s ease;
+  }
+  input:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(223, 183, 88, 0.15); background: rgba(0,0,0,0.4); }
+  button {
+    width: 100%; margin-top: 12px;
+    background: linear-gradient(135deg, var(--gold), #b8913e);
+    color: #000; border: none; border-radius: 10px;
+    padding: 14px; font-size: 1rem; font-weight: 600;
+    letter-spacing: 0.04em; cursor: pointer; transition: all 0.25s ease;
+    box-shadow: 0 4px 15px rgba(223, 183, 88, 0.2); font-family: inherit;
+  }
+  button:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(223, 183, 88, 0.35); }
+  button:active { transform: translateY(0); }
+  
+  .error {
+    background: rgba(248, 113, 113, 0.1); border: 1px solid rgba(248, 113, 113, 0.3);
+    color: #f87171; font-size: 0.9rem; border-radius: 10px; font-weight: 500;
+    padding: 12px 14px; margin-bottom: 24px; animation: slideIn 0.3s ease-out;
+  }
+  @keyframes slideIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
+  
+  .footer { color: #5a647a; font-size: 11px; margin-top: 36px; letter-spacing: 0.06em; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="emblem">&#10022;</div>
+    <h1>Pirates Wifi</h1>
+    <p class="tagline">Admin Access</p>
+    {% if error %}
+    <div class="error">Invalid username or password.</div>
+    {% endif %}
+    <form method="post" action="/login">
+      <input type="hidden" name="next" value="{{ next }}">
+      <div class="field">
+        <label>Username</label>
+        <input name="username" autocomplete="username" required autofocus>
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <button type="submit">Sign in</button>
+    </form>
+    <div class="footer">PIRATES WIFI &middot; BILLING CONSOLE</div>
+  </div>
+</body>
+</html>

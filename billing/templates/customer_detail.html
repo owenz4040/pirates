@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}{{ customer.pppoe_username }} - Pirates Billing{% endblock %}
+{% block content %}
+<h1>
+  {{ customer.pppoe_username }}
+  <span class="badge {{ customer.status.value }}">{{ customer.status.value }}</span>
+  <span class="badge {{ 'online' if online else 'offline' }}">{{ 'online' if online else 'offline' }}</span>
+</h1>
+
+<div class="grid-2">
+  <div class="panel">
+    <span class="panel-title">Details</span>
+    <form method="post" action="/dashboard/customers/{{ customer.pppoe_username }}/details">
+      <div class="field-row">
+        <div>
+          <label>Full name</label>
+          <input name="full_name" value="{{ customer.full_name }}" required>
+        </div>
+        <div>
+          <label>Phone (2547...)</label>
+          <input name="phone_number" value="{{ customer.phone_number }}" required>
+        </div>
+        <div>
+          <label>Email (optional)</label>
+          <input name="email" type="email" value="{{ customer.email or '' }}">
+        </div>
+      </div>
+      <button type="submit" class="secondary">Save details</button>
+    </form>
+  </div>
+  <div class="panel">
+    <span class="panel-title">Plan</span>
+    <div>{{ customer.plan.name }} ({{ customer.plan.rate_limit }}) &mdash; KES {{ customer.plan.price_kes }}</div>
+    <div class="muted" style="margin-top:14px">Expires</div>
+    <div>
+      {% if customer.expires_at %}
+        {{ customer.expires_at.strftime('%Y-%m-%d %H:%M UTC') }}
+      {% else %}
+        No expiry
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<h2>Actions</h2>
+<div class="actions">
+  {% if customer.status.value == 'active' %}
+  <form class="inline" method="post" action="/dashboard/customers/{{ customer.pppoe_username }}/suspend">
+    <button type="submit" class="danger">Suspend</button>
+  </form>
+  {% endif %}
+  <form class="inline" method="post" action="/dashboard/customers/{{ customer.pppoe_username }}/mpesa/charge">
+    <button type="submit" class="secondary">Send M-Pesa prompt (KES {{ customer.plan.price_kes }})</button>
+  </form>
+  <form class="inline" method="post" action="/dashboard/customers/{{ customer.pppoe_username }}/mpesa/paybill">
+    <button type="submit" class="secondary">Generate paybill code (KES {{ customer.plan.price_kes }})</button>
+  </form>
+  <form class="inline" method="post" action="/dashboard/customers/{{ customer.pppoe_username }}/delete"
+        onsubmit="return confirm('Permanently delete {{ customer.pppoe_username }}? This removes their PPPoE account from the router and erases their payment history. This cannot be undone.');">
+    <button type="submit" class="danger">Delete customer</button>
+  </form>
+</div>
+
+<div class="grid-2">
+  <div class="panel">
+    <span class="panel-title">Record cash payment</span>
+    <form method="post" action="/dashboard/customers/{{ customer.pppoe_username }}/payments">
+      <div class="field-row">
+        <div>
+          <label>Amount (KES)</label>
+          <input name="amount_kes" type="number" step="0.01" value="{{ customer.plan.price_kes }}" required>
+        </div>
+        <div>
+          <label>Receipt / note</label>
+          <input name="mpesa_receipt">
+        </div>
+      </div>
+      <button type="submit">Record payment</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <span class="panel-title">Change plan</span>
+    <form method="post" action="/dashboard/customers/{{ customer.pppoe_username }}/plan">
+      <div class="field-row">
+        <select name="plan_id" required>
+          {% for plan in plans %}
+          <option value="{{ plan.id }}" {{ 'selected' if plan.id == customer.plan_id else '' }}>{{ plan.name }} ({{ plan.rate_limit }}) - KES {{ plan.price_kes }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit">Change plan</button>
+    </form>
+  </div>
+</div>
+
+<h2>Payment history</h2>
+<div class="table-wrapper">
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Amount</th>
+        <th>Status</th>
+        <th>Receipt</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for payment in payments %}
+      <tr>
+        <td data-label="Date" class="muted">{{ payment.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td data-label="Amount">KES {{ payment.amount_kes }}</td>
+        <td data-label="Status"><span class="badge {{ payment.status.value }}">{{ payment.status.value }}</span></td>
+        <td data-label="Receipt" class="muted">{{ payment.mpesa_receipt or '-' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="muted">No payments yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

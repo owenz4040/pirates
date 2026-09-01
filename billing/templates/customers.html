@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Pirates Billing{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-label">Total customers</div>
+    <div class="stat-value">{{ stats.total }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Active</div>
+    <div class="stat-value">{{ stats.active }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Suspended / expired</div>
+    <div class="stat-value">{{ stats.suspended }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Online now</div>
+    <div class="stat-value">{{ stats.online }}</div>
+  </div>
+</div>
+
+<div class="filter-tabs">
+  <a href="/dashboard?filter=all" class="filter-tab {% if filter_type == 'all' %}active{% endif %}">All</a>
+  <a href="/dashboard?filter=active" class="filter-tab {% if filter_type == 'active' %}active{% endif %}">Active</a>
+  <a href="/dashboard?filter=online" class="filter-tab {% if filter_type == 'online' %}active{% endif %}">Online</a>
+  <a href="/dashboard?filter=offline" class="filter-tab {% if filter_type == 'offline' %}active{% endif %}">Offline</a>
+  <a href="/dashboard?filter=expired" class="filter-tab {% if filter_type == 'expired' %}active{% endif %}">Expired</a>
+</div>
+
+<div class="table-wrapper">
+  <table>
+    <thead>
+      <tr>
+        <th>Username</th>
+        <th>Name</th>
+        <th>Phone</th>
+        <th>Plan</th>
+        <th>Status</th>
+        <th>Online</th>
+        <th>Expires</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in customers %}
+      <tr>
+        <td data-label="Username"><a class="row-link" href="/dashboard/customers/{{ row.customer.pppoe_username }}">{{ row.customer.pppoe_username }}</a></td>
+        <td data-label="Name">{{ row.customer.full_name }}</td>
+        <td data-label="Phone" class="muted">{{ row.customer.phone_number }}</td>
+        <td data-label="Plan">{{ row.customer.plan.name }}</td>
+        <td data-label="Status"><span class="badge {{ row.customer.status.value }}">{{ row.customer.status.value }}</span></td>
+        <td data-label="Online"><span class="badge {{ 'online' if row.online else 'offline' }}">{{ 'online' if row.online else 'offline' }}</span></td>
+        <td data-label="Expires" class="muted">
+          {% if row.customer.expires_at %}
+            {{ row.customer.expires_at.strftime('%Y-%m-%d %H:%M') }}
+          {% else %}
+            No expiry
+          {% endif %}
+        </td>
+        <td data-label=""><a href="/dashboard/customers/{{ row.customer.pppoe_username }}"><button type="button" class="secondary">Manage</button></a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="muted">No customers found.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
