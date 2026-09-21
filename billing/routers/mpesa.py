@@ -142,14 +142,18 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)) -> d
         return {"status": "ignored"}
 
     if result["event"] == "charge.success" and result["status"] == "success":
+        from mikrotik.static_user import StaticUserManager
+
         with router_connection() as api:
             ppp = PPPoEManager(api)
+            static_mgr = StaticUserManager(api)
             payment = services.confirm_payment(
                 db,
                 ppp,
                 payment,
                 mpesa_receipt=str(result["paystack_transaction_id"]),
                 raw_callback=payload,
+                static_mgr=static_mgr,
             )
         if payment.customer.email:
             try:

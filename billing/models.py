@@ -36,8 +36,13 @@ class CustomerStatus(str, enum.Enum):
     expired = "expired"  # suspended by the expiry worker for non-payment
 
 
+class ConnectionType(str, enum.Enum):
+    pppoe = "pppoe"
+    static = "static"
+
+
 class Customer(Base):
-    """A subscriber. One row per PPPoE account."""
+    """A subscriber. One row per PPPoE or static account."""
 
     __tablename__ = "customers"
 
@@ -46,6 +51,10 @@ class Customer(Base):
     full_name: Mapped[str] = mapped_column(String(128))
     phone_number: Mapped[str] = mapped_column(String(20), unique=True)  # 2547XXXXXXXX, used for M-Pesa STK push
     email: Mapped[str | None] = mapped_column(String(128), nullable=True)  # optional - welcome email if present
+    connection_type: Mapped[ConnectionType] = mapped_column(
+        Enum(ConnectionType, name="connection_type"), default=ConnectionType.pppoe, server_default="pppoe"
+    )
+    static_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
     # Unguessable secret embedded in the "Pay Now" email link so clicking it
     # can only trigger a charge for this one customer, not any username.
     pay_token: Mapped[str] = mapped_column(String(32), unique=True, default=lambda: secrets.token_hex(16))

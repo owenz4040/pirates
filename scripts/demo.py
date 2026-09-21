@@ -9,6 +9,10 @@ Usage:
     python -m scripts.demo restore <username>
     python -m scripts.demo set-bandwidth <username> <profile-name>
     python -m scripts.demo ensure-profile <profile-name> <rate-limit>   # e.g. 10M/10M
+    python -m scripts.demo list-queues
+    python -m scripts.demo suspend-static <ip-or-cidr>
+    python -m scripts.demo restore-static <ip-or-cidr>
+    python -m scripts.demo set-static-bandwidth <queue-name> <rate-limit>
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ from dotenv import load_dotenv
 from mikrotik.bandwidth import BandwidthProfileManager
 from mikrotik.client import RouterConfig, router_connection
 from mikrotik.pppoe import PPPoEManager
+from mikrotik.static_user import StaticUserManager
 
 
 def main() -> None:
@@ -34,6 +39,7 @@ def main() -> None:
     with router_connection(config) as api:
         ppp = PPPoEManager(api)
         bw = BandwidthProfileManager(api)
+        static_mgr = StaticUserManager(api)
 
         if command == "list-secrets":
             for secret in ppp.list_secrets():
@@ -57,6 +63,21 @@ def main() -> None:
             name, rate_limit = args
             profile = bw.ensure_profile(name, rate_limit)
             print(f"Profile {profile.name} rate-limit={profile.rate_limit}")
+        elif command == "list-queues":
+            suspended = static_mgr.list_suspended_ips()
+            for q in static_mgr.list_queues():
+                status = "suspended" if q.target in suspended or q.target.replace("/32", "") in suspended else "active"
+                print(f"{q.name:20} target={q.target:18} max-limit={q.max_limit:10} {status}")
+        elif command == "suspend-static":
+            static_mgr.suspend_user(args[0])
+            print(f"Suspended static target {args[0]}")
+        elif command == "restore-static":
+            static_mgr.restore_user(args[0])
+            print(f"Restored static target {args[0]}")
+        elif command == "set-static-bandwidth":
+            name, rate_limit = args
+            static_mgr.set_bandwidth(name, rate_limit)
+            print(f"Updated queue {name} rate-limit to {rate_limit}")
         else:
             print(__doc__)
             raise SystemExit(1)

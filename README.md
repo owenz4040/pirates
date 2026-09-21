@@ -14,7 +14,9 @@ RouterOS directly.
   kick), restore, and move a user to a different bandwidth profile.
 - `mikrotik/bandwidth.py` - `BandwidthProfileManager`: manage PPP profiles used
   as bandwidth tiers (`rate-limit`).
-- `scripts/demo.py` - CLI to exercise the above against your real hAP lite.
+- `mikrotik/static_user.py` - `StaticUserManager`: manage static IP and subnet pool
+  subscribers via Simple Queues (`/queue/simple`) and firewall address-lists (`/ip/firewall/address-list`).
+- `scripts/demo.py` - CLI to exercise PPPoE and static user controls against your real router.
 - `tests/` - unit tests against an in-memory fake router (no hardware needed).
 
 ## Router-side setup (hAP lite, one-time)
@@ -57,6 +59,17 @@ so lock it down before you rely on it:
    upload/download from the subscriber's point of view.) Or do this from
    Python: `BandwidthProfileManager(api).ensure_profile("10mbps", "10M/10M")`.
 
+6. **Add firewall drop rule for suspended static users:**
+   For static IP subscribers and repeater pools, suspension is enforced by adding
+   the target IP or subnet to the `suspended-users` address-list. Add a drop rule in the forward chain:
+   `/ip firewall filter add chain=forward src-address-list=suspended-users action=drop place-before=0 comment="Drop suspended static users"`
+
+## Static IP & Repeater Pools
+
+For customers connected without PPPoE (such as bridged routers, ONUs like HG8546M with DHCP disabled, or fixed static IPs):
+- **Single IP**: enter e.g. `192.168.88.50`. A simple queue shapes this target and suspension adds `/32` to `suspended-users`.
+- **Repeater Pool (Subnet)**: enter a CIDR subnet e.g. `192.168.88.48/29`. All devices within that subnet automatically share the plan speed in a single simple queue, and suspending drops the entire pool.
+
 ## Local setup
 
 ```
@@ -74,11 +87,18 @@ Run the tests (no router required):
 Try it against the real router:
 
 ```
+# PPPoE Management
 .venv\Scripts\python -m scripts.demo list-secrets
 .venv\Scripts\python -m scripts.demo ensure-profile 10mbps 10M/10M
 .venv\Scripts\python -m scripts.demo set-bandwidth alice 10mbps
 .venv\Scripts\python -m scripts.demo suspend alice
 .venv\Scripts\python -m scripts.demo restore alice
+
+# Static & Repeater Management
+.venv\Scripts\python -m scripts.demo list-queues
+.venv\Scripts\python -m scripts.demo set-static-bandwidth static-alice 10M/10M
+.venv\Scripts\python -m scripts.demo suspend-static 192.168.88.50
+.venv\Scripts\python -m scripts.demo restore-static 192.168.88.50
 ```
 
 ## Design notes / caveats worth knowing before building on top of this

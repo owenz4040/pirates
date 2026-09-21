@@ -41,7 +41,10 @@ def record_payment(
     if customer is None:
         raise HTTPException(404, f"No customer {username!r}")
 
+    from mikrotik.static_user import StaticUserManager
+
     ppp = PPPoEManager(api)
+    static_mgr = StaticUserManager(api)
     return services.record_payment(
         db,
         ppp,
@@ -49,4 +52,5 @@ def record_payment(
         amount_kes=payload.amount_kes,
         mpesa_receipt=payload.mpesa_receipt,
         phone_number=payload.phone_number,
+        static_mgr=static_mgr,
     )

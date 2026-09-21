@@ -28,13 +28,16 @@
   <a href="/dashboard?filter=online" class="filter-tab {% if filter_type == 'online' %}active{% endif %}">Online</a>
   <a href="/dashboard?filter=offline" class="filter-tab {% if filter_type == 'offline' %}active{% endif %}">Offline</a>
   <a href="/dashboard?filter=expired" class="filter-tab {% if filter_type == 'expired' %}active{% endif %}">Expired</a>
+  <a href="/dashboard?filter=pppoe" class="filter-tab {% if filter_type == 'pppoe' %}active{% endif %}">PPPoE</a>
+  <a href="/dashboard?filter=static" class="filter-tab {% if filter_type == 'static' %}active{% endif %}">Static IP</a>
 </div>
 
 <div class="table-wrapper">
   <table>
     <thead>
       <tr>
-        <th>Username</th>
+        <th>Account</th>
+        <th>Type</th>
         <th>Name</th>
         <th>Phone</th>
         <th>Plan</th>
@@ -47,7 +50,17 @@
     <tbody>
       {% for row in customers %}
       <tr>
-        <td data-label="Username"><a class="row-link" href="/dashboard/customers/{{ row.customer.pppoe_username }}">{{ row.customer.pppoe_username }}</a></td>
+        <td data-label="Account">
+          <a class="row-link" href="/dashboard/customers/{{ row.customer.pppoe_username }}">{{ row.customer.pppoe_username }}</a>
+          {% if row.customer.connection_type.value == 'static' and row.customer.static_ip %}
+            <div style="font-size: 11px; color: var(--gold); font-family: monospace;">{{ row.customer.static_ip }}</div>
+          {% endif %}
+        </td>
+        <td data-label="Type">
+          <span style="font-size: 11px; font-weight: 600; text-transform: uppercase; padding: 2px 8px; border-radius: 4px; background: {% if row.customer.connection_type.value == 'static' %}rgba(91, 157, 255, 0.15); color: #5b9dff; border: 1px solid rgba(91, 157, 255, 0.3);{% else %}rgba(223, 183, 88, 0.15); color: var(--gold); border: 1px solid rgba(223, 183, 88, 0.3);{% endif %}">
+            {{ row.customer.connection_type.value }}
+          </span>
+        </td>
         <td data-label="Name">{{ row.customer.full_name }}</td>
         <td data-label="Phone" class="muted">{{ row.customer.phone_number }}</td>
         <td data-label="Plan">{{ row.customer.plan.name }}</td>
@@ -63,7 +76,7 @@
         <td data-label=""><a href="/dashboard/customers/{{ row.customer.pppoe_username }}"><button type="button" class="secondary">Manage</button></a></td>
       </tr>
       {% else %}
-      <tr><td colspan="8" class="muted">No customers found.</td></tr>
+      <tr><td colspan="9" class="muted">No customers found.</td></tr>
       {% endfor %}
     </tbody>
   </table>

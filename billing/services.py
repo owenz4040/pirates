@@ -18,47 +18,78 @@ from sqlalchemy.orm import Session
 
 from billing.config import settings
 from billing.email import client as email_client
-from billing.models import Customer, CustomerStatus, Payment, PaymentStatus, Plan
+from billing.models import ConnectionType, Customer, CustomerStatus, Payment, PaymentStatus, Plan
 from billing.mpesa import paystack
 from mikrotik.bandwidth import BandwidthProfileManager
 from mikrotik.pppoe import PPPoEManager
+from mikrotik.static_user import StaticUserManager
 
 
 def create_customer(
     db: Session,
-    ppp: PPPoEManager,
+    ppp: PPPoEManager | None = None,
     *,
     pppoe_username: str,
-    pppoe_password: str,
+    pppoe_password: str = "",
     full_name: str,
     phone_number: str,
     plan: Plan,
+    connection_type: ConnectionType = ConnectionType.pppoe,
+    static_ip: str | None = None,
     email: str | None = None,
     no_expiry: bool = False,
+    static_mgr: StaticUserManager | None = None,
 ) -> Customer:
     """
-    Create the PPPoE secret on the router, then the billing record.
+    Create the PPPoE secret or Simple Queue on the router, then the billing record.
 
     New customers start already expired - they only become active through
     record_payment(), same path an existing customer's renewal takes.
     Unless no_expiry is True, in which case they are activated immediately.
     """
-    ppp.create_secret(pppoe_username, pppoe_password, profile=plan.name, comment=full_name)
-    
-    if no_expiry:
-        ppp.enable_user(pppoe_username)
-        status = CustomerStatus.active
-        expires_at = None
+    if connection_type == ConnectionType.static:
+        if not static_ip:
+            raise ValueError("Static IP is required for static connection type")
+        if static_mgr:
+            static_mgr.create_or_update_queue(
+                name=pppoe_username,
+                target_ip=static_ip,
+                rate_limit=plan.rate_limit,
+                comment=full_name,
+            )
+            if no_expiry:
+                static_mgr.restore_user(static_ip)
+                status = CustomerStatus.active
+                expires_at = None
+            else:
+                static_mgr.suspend_user(static_ip, comment=full_name)
+                status = CustomerStatus.expired
+                expires_at = datetime.now(timezone.utc)
+        else:
+            status = CustomerStatus.active if no_expiry else CustomerStatus.expired
+            expires_at = None if no_expiry else datetime.now(timezone.utc)
     else:
-        ppp.disable_user(pppoe_username)
-        status = CustomerStatus.expired
-        expires_at = datetime.now(timezone.utc)
+        if ppp:
+            ppp.create_secret(pppoe_username, pppoe_password, profile=plan.name, comment=full_name)
+            if no_expiry:
+                ppp.enable_user(pppoe_username)
+                status = CustomerStatus.active
+                expires_at = None
+            else:
+                ppp.disable_user(pppoe_username)
+                status = CustomerStatus.expired
+                expires_at = datetime.now(timezone.utc)
+        else:
+            status = CustomerStatus.active if no_expiry else CustomerStatus.expired
+            expires_at = None if no_expiry else datetime.now(timezone.utc)
 
     customer = Customer(
         pppoe_username=pppoe_username,
         full_name=full_name,
         phone_number=phone_number,
         email=email,
+        connection_type=connection_type,
+        static_ip=static_ip,
         plan_id=plan.id,
         status=status,
         expires_at=expires_at,
@@ -76,7 +107,10 @@ def _extend_subscription(customer: Customer) -> datetime:
     the remaining paid days. Returns the "now" used, for confirmed_at.
     """
     now = datetime.now(timezone.utc)
-    base = max(now, customer.expires_at) if customer.expires_at else now
+    current_expires = customer.expires_at
+    if current_expires is not None and current_expires.tzinfo is None:
+        current_expires = current_expires.replace(tzinfo=timezone.utc)
+    base = max(now, current_expires) if current_expires else now
     customer.expires_at = base + timedelta(days=customer.plan.duration_days)
     customer.status = CustomerStatus.active
     customer.reminder_2_days_sent = False
@@ -86,13 +120,14 @@ def _extend_subscription(customer: Customer) -> datetime:
 
 def record_payment(
     db: Session,
-    ppp: PPPoEManager,
+    ppp: PPPoEManager | None = None,
     *,
     customer: Customer,
     amount_kes: Decimal,
     mpesa_receipt: str | None,
     phone_number: str | None,
     checkout_request_id: str | None = None,
+    static_mgr: StaticUserManager | None = None,
 ) -> Payment:
     """Record and immediately confirm a payment - for manual/cash entry, not the M-Pesa callback path."""
     now = _extend_subscription(customer)
@@ -112,8 +147,15 @@ def record_payment(
     db.refresh(customer)
     db.refresh(payment)
 
-    ppp.set_profile(customer.pppoe_username, customer.plan.name)
-    ppp.enable_user(customer.pppoe_username)
+    if customer.connection_type == ConnectionType.static:
+        if static_mgr:
+            static_mgr.set_bandwidth(customer.pppoe_username, customer.plan.rate_limit)
+            if customer.static_ip:
+                static_mgr.restore_user(customer.static_ip)
+    else:
+        if ppp:
+            ppp.set_profile(customer.pppoe_username, customer.plan.name)
+            ppp.enable_user(customer.pppoe_username)
     return payment
 
 
@@ -353,11 +395,12 @@ def compose_receipt_email(customer: Customer, payment: Payment) -> tuple[str, st
 
 def confirm_payment(
     db: Session,
-    ppp: PPPoEManager,
+    ppp: PPPoEManager | None,
     payment: Payment,
     *,
     mpesa_receipt: str,
     raw_callback: dict,
+    static_mgr: StaticUserManager | None = None,
 ) -> Payment:
     """Called from the Paystack webhook on charge.success: finish a pending payment."""
     customer = payment.customer
@@ -373,8 +416,15 @@ def confirm_payment(
     db.refresh(customer)
     db.refresh(payment)
 
-    ppp.set_profile(customer.pppoe_username, customer.plan.name)
-    ppp.enable_user(customer.pppoe_username)
+    if customer.connection_type == ConnectionType.static:
+        if static_mgr:
+            static_mgr.set_bandwidth(customer.pppoe_username, customer.plan.rate_limit)
+            if customer.static_ip:
+                static_mgr.restore_user(customer.static_ip)
+    else:
+        if ppp:
+            ppp.set_profile(customer.pppoe_username, customer.plan.name)
+            ppp.enable_user(customer.pppoe_username)
     return payment
 
 
@@ -395,23 +445,49 @@ def update_customer_details(
     full_name: str | None = None,
     phone_number: str | None = None,
     email: str | None = None,
+    static_ip: str | None = None,
+    static_mgr: StaticUserManager | None = None,
 ) -> Customer:
-    """Edit contact details - DB-only, doesn't touch the router (name/phone/email aren't stored there)."""
+    """Edit contact details and static IP."""
     if full_name is not None:
         customer.full_name = full_name
     if phone_number is not None:
         customer.phone_number = phone_number
     if email is not None:
         customer.email = email
+    if static_ip is not None and customer.connection_type == ConnectionType.static:
+        old_ip = customer.static_ip
+        customer.static_ip = static_ip
+        if static_mgr:
+            static_mgr.create_or_update_queue(
+                name=customer.pppoe_username,
+                target_ip=static_ip,
+                rate_limit=customer.plan.rate_limit,
+                comment=customer.full_name,
+            )
+            if customer.status in (CustomerStatus.suspended, CustomerStatus.expired):
+                if old_ip:
+                    static_mgr.restore_user(old_ip)
+                static_mgr.suspend_user(static_ip, comment=customer.full_name)
     db.add(customer)
     db.commit()
     db.refresh(customer)
     return customer
 
 
-def suspend_customer(db: Session, ppp: PPPoEManager, customer: Customer) -> Customer:
+def suspend_customer(
+    db: Session,
+    ppp: PPPoEManager | None,
+    customer: Customer,
+    static_mgr: StaticUserManager | None = None,
+) -> Customer:
     """Manual suspend (support/abuse) - distinct from expiry, which the worker drives."""
-    ppp.disable_user(customer.pppoe_username)
+    if customer.connection_type == ConnectionType.static:
+        if static_mgr and customer.static_ip:
+            static_mgr.suspend_user(customer.static_ip, comment=customer.full_name)
+    else:
+        if ppp:
+            ppp.disable_user(customer.pppoe_username)
     customer.status = CustomerStatus.suspended
     db.add(customer)
     db.commit()
@@ -419,17 +495,27 @@ def suspend_customer(db: Session, ppp: PPPoEManager, customer: Customer) -> Cust
     return customer
 
 
-def delete_customer(db: Session, ppp: PPPoEManager, customer: Customer) -> None:
+def delete_customer(
+    db: Session,
+    ppp: PPPoEManager | None,
+    customer: Customer,
+    static_mgr: StaticUserManager | None = None,
+) -> None:
     """
-    Permanently remove a customer: drops their PPPoE secret (and any live
-    session) from the router, then deletes their payment history and the
-    customer row. Irreversible - use suspend_customer for anything that
-    might need to be undone.
+    Permanently remove a customer: drops their PPPoE secret or simple queue from
+    the router, then deletes their payment history and the customer row.
     """
-    try:
-        ppp.delete_secret(customer.pppoe_username)
-    except LookupError:
-        pass  # already gone from the router - fine, still remove the DB record
+    if customer.connection_type == ConnectionType.static:
+        if static_mgr:
+            static_mgr.delete_queue(customer.pppoe_username)
+            if customer.static_ip:
+                static_mgr.restore_user(customer.static_ip)
+    else:
+        if ppp:
+            try:
+                ppp.delete_secret(customer.pppoe_username)
+            except LookupError:
+                pass  # already gone from the router - fine, still remove the DB record
     db.query(Payment).filter(Payment.customer_id == customer.id).delete()
     db.delete(customer)
     db.commit()
@@ -437,16 +523,22 @@ def delete_customer(db: Session, ppp: PPPoEManager, customer: Customer) -> None:
 
 def change_plan(
     db: Session,
-    ppp: PPPoEManager,
+    ppp: PPPoEManager | None,
     customer: Customer,
     new_plan: Plan,
+    static_mgr: StaticUserManager | None = None,
 ) -> Customer:
     customer.plan_id = new_plan.id
     db.add(customer)
     db.commit()
     db.refresh(customer)
     if customer.status == CustomerStatus.active:
-        ppp.set_profile(customer.pppoe_username, new_plan.name)
+        if customer.connection_type == ConnectionType.static:
+            if static_mgr:
+                static_mgr.set_bandwidth(customer.pppoe_username, new_plan.rate_limit)
+        else:
+            if ppp:
+                ppp.set_profile(customer.pppoe_username, new_plan.name)
     return customer
 
 
@@ -519,7 +611,11 @@ def update_plan(
     return plan
 
 
-def expire_overdue_customers(db: Session, ppp: PPPoEManager) -> list[Customer]:
+def expire_overdue_customers(
+    db: Session,
+    ppp: PPPoEManager | None = None,
+    static_mgr: StaticUserManager | None = None,
+) -> list[Customer]:
     """Suspend every active customer whose expires_at has passed. Used by the worker."""
     now = datetime.now(timezone.utc)
     overdue = (
@@ -528,7 +624,12 @@ def expire_overdue_customers(db: Session, ppp: PPPoEManager) -> list[Customer]:
         .all()
     )
     for customer in overdue:
-        ppp.disable_user(customer.pppoe_username)
+        if customer.connection_type == ConnectionType.static:
+            if static_mgr and customer.static_ip:
+                static_mgr.suspend_user(customer.static_ip, comment=customer.full_name)
+        else:
+            if ppp:
+                ppp.disable_user(customer.pppoe_username)
         customer.status = CustomerStatus.expired
         db.add(customer)
     db.commit()

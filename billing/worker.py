@@ -20,6 +20,7 @@ from billing.db import SessionLocal  # noqa: E402
 from billing.services import expire_overdue_customers  # noqa: E402
 from mikrotik.client import router_connection  # noqa: E402
 from mikrotik.pppoe import PPPoEManager  # noqa: E402
+from mikrotik.static_user import StaticUserManager  # noqa: E402
 
 
 def main() -> None:
@@ -32,7 +33,8 @@ def main() -> None:
 
         with router_connection() as api:
             ppp = PPPoEManager(api)
-            expired = expire_overdue_customers(db, ppp)
+            static_mgr = StaticUserManager(api)
+            expired = expire_overdue_customers(db, ppp=ppp, static_mgr=static_mgr)
         for customer in expired:
             print(f"Expired {customer.pppoe_username} (was due {customer.expires_at.isoformat()})")
         if not expired:

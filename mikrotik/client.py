@@ -22,6 +22,7 @@ class RouterConfig:
     port: int = 8729
     use_ssl: bool = True
     verify_ssl: bool = False
+    timeout: float = 10.0
 
     @classmethod
     def from_env(cls) -> "RouterConfig":
@@ -33,6 +34,7 @@ class RouterConfig:
             port=int(os.environ.get("MIKROTIK_PORT", "8729")),
             use_ssl=os.environ.get("MIKROTIK_USE_SSL", "true").lower() != "false",
             verify_ssl=os.environ.get("MIKROTIK_VERIFY_SSL", "false").lower() == "true",
+            timeout=float(os.environ.get("MIKROTIK_TIMEOUT", "10.0")),
         )
 
 
@@ -68,6 +70,7 @@ def router_connection(config: RouterConfig | None = None) -> Iterator[Api]:
         username=config.username,
         password=config.password,
         port=config.port,
+        timeout=config.timeout,
         ssl_wrapper=ssl_wrapper,
     )
     try:
