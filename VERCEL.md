@@ -1,6 +1,6 @@
 # Running Pirates billing on Vercel
 
-End result: the dashboard lives at `https://pirates.colinowen.online`, GitHub
+End result: the dashboard lives at `https://billing.colinowen.online`, GitHub
 pushes to `main` deploy automatically, and the MikroTik pulls its changes
 from the app once a minute. Nothing connects *in* to the router, so it needs
 no public IP, port forward, or VPN.
@@ -43,7 +43,7 @@ MikroTik ── every 60s ────┘  POST /api/router/sync  → gets queue
    | `ADMIN_USERNAME`, `ADMIN_PASSWORD` | your dashboard login |
    | `SESSION_SECRET_KEY` | `python -c "import secrets; print(secrets.token_hex(32))"`. **Required.** Without it you get logged out on every cold start. |
    | `CRON_SECRET` | another random hex string |
-   | `PUBLIC_BASE_URL` | `https://pirates.colinowen.online` |
+   | `PUBLIC_BASE_URL` | `https://billing.colinowen.online` |
    | `PAYSTACK_SECRET_KEY` | from Paystack |
    | `AFRICASTALKING_*`, `RESEND_*` | as in `.env.example` |
 
@@ -52,16 +52,16 @@ MikroTik ── every 60s ────┘  POST /api/router/sync  → gets queue
 ## 3. Domain
 
 1. In the project, open **Settings**, then **Domains**, then **Add**, and
-   enter `pirates.colinowen.online`.
+   enter `billing.colinowen.online`.
 2. Where colinowen.online's DNS is managed, add the record Vercel shows,
-   normally `CNAME pirates → cname.vercel-dns.com`. Your portfolio on the
+   normally `A billing → 76.76.21.21` with the proxy **off** (grey cloud, "DNS only"). Your portfolio on the
    apex domain is untouched. If the apex domain belongs to a different Vercel
    account, Vercel also asks for a `TXT` verification record. Add that too.
 
 ## 4. Paystack
 
 Set the webhook URL in the Paystack dashboard to
-`https://pirates.colinowen.online/paystack/webhook`.
+`https://billing.colinowen.online/paystack/webhook`.
 
 ## 5. Router
 
