@@ -51,8 +51,8 @@
     {% endif %}
     <div class="muted" style="margin-top:14px">Expires</div>
     <div>
-      {% if customer.expires_at %}
-        {{ customer.expires_at.strftime('%Y-%m-%d %H:%M UTC') }}
+      {% if expires_local %}
+        {{ expires_local.strftime('%d %b %Y, %H:%M') }} EAT
       {% else %}
         No expiry
       {% endif %}
@@ -109,6 +109,52 @@
       </div>
       <button type="submit">Change plan</button>
     </form>
+  </div>
+</div>
+
+<div class="panel">
+  <span class="panel-title">Expiry</span>
+  <p class="muted" style="margin-top:0">
+    Change when this customer's service ends without recording a payment, e.g. to make up for an outage or
+    give a free trial. A future date reconnects them, even if they were suspended. A past date disconnects
+    them now. Router changes apply within a minute.
+  </p>
+  <div class="grid-2">
+    <form method="post" action="/dashboard/customers/{{ customer.pppoe_username }}/expiry">
+      <input type="hidden" name="mode" value="set">
+      <label>Expires on (Kenya time)</label>
+      <div class="field-row">
+        <input type="datetime-local" name="expires_at" required
+               value="{{ expires_local.strftime('%Y-%m-%dT%H:%M') if expires_local else '' }}">
+      </div>
+      <button type="submit">Set date</button>
+    </form>
+    <div>
+      <label>Add time</label>
+      <div class="actions" style="margin:0 0 12px">
+        {% for d in [1, 7, 30] %}
+        <form class="inline" method="post" action="/dashboard/customers/{{ customer.pppoe_username }}/expiry">
+          <input type="hidden" name="mode" value="add">
+          <input type="hidden" name="days" value="{{ d }}">
+          <button type="submit" class="secondary">+{{ d }} day{{ 's' if d > 1 else '' }}</button>
+        </form>
+        {% endfor %}
+      </div>
+      <form method="post" action="/dashboard/customers/{{ customer.pppoe_username }}/expiry">
+        <input type="hidden" name="mode" value="add">
+        <div class="field-row">
+          <input type="number" name="days" placeholder="Days (negative to remove)" required>
+        </div>
+        <button type="submit" class="secondary">Apply days</button>
+      </form>
+      {% if customer.expires_at %}
+      <form method="post" action="/dashboard/customers/{{ customer.pppoe_username }}/expiry" style="margin-top:12px"
+            onsubmit="return confirm('Remove the expiry date? {{ customer.pppoe_username }} will stay connected until you change it.');">
+        <input type="hidden" name="mode" value="none">
+        <button type="submit" class="secondary">No expiry</button>
+      </form>
+      {% endif %}
+    </div>
   </div>
 </div>
 

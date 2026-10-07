@@ -543,6 +543,41 @@ def change_plan(
     return customer
 
 
+def set_expiry(
+    db: Session,
+    ppp: PPPoEManager | None,
+    customer: Customer,
+    expires_at: datetime | None,
+    static_mgr: StaticUserManager | None = None,
+) -> Customer:
+    """
+    Admin override of a customer's expiry, without recording a payment (e.g.
+    compensation for an outage, a free trial, or fixing a mistake). None means
+    no expiry. A future date (or none) reconnects the customer - even one who
+    was manually suspended - and a past date cuts them off now rather than
+    waiting for the next sweep.
+    """
+    now = datetime.now(timezone.utc)
+    customer.expires_at = expires_at
+    if expires_at is None or expires_at > now:
+        if customer.status != CustomerStatus.active:
+            _reactivate_on_router(customer, ppp, static_mgr)
+        customer.status = CustomerStatus.active
+        customer.reminder_2_days_sent = False
+        customer.reminder_1_day_sent = False
+    elif customer.status == CustomerStatus.active:
+        if customer.connection_type == ConnectionType.static:
+            if static_mgr and customer.static_ip:
+                static_mgr.suspend_user(customer.static_ip, comment=customer.full_name)
+        elif ppp:
+            ppp.disable_user(customer.pppoe_username)
+        customer.status = CustomerStatus.expired
+    db.add(customer)
+    db.commit()
+    db.refresh(customer)
+    return customer
+
+
 def create_plan(
     db: Session,
     bw: BandwidthProfileManager,

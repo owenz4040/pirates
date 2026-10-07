@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import secrets
 import uuid
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from urllib.parse import urlencode
@@ -28,6 +29,18 @@ from billing.schemas import _normalize_kenyan_phone, _validate_ip
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"], dependencies=[Depends(require_admin)])
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
+
+# Admins enter and read times in Kenya time. Fixed offset: Kenya has no DST,
+# and the serverless runtime may not ship a tz database.
+EAT = timezone(timedelta(hours=3), "EAT")
+
+
+def _to_eat(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:  # stored as UTC
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(EAT)
 
 
 def _redirect(path: str, *, flash: str | None = None, flash_kind: str = "ok") -> RedirectResponse:
@@ -202,6 +215,7 @@ def customer_page(
             "online": online,
             "plans": plans,
             "payments": payments,
+            "expires_local": _to_eat(customer.expires_at),
             **_flash_context(request),
         },
     )
@@ -276,6 +290,51 @@ def update_details(
             flash_kind="error",
         )
     return _redirect(f"/dashboard/customers/{username}", flash="Details updated")
+
+
+@router.post("/customers/{username}/expiry")
+def set_expiry(
+    username: str,
+    mode: str = Form(...),
+    expires_at: str = Form(""),
+    days: int = Form(0),
+    db: Session = Depends(get_db),
+    gw: RouterGateway = Depends(get_router),
+):
+    """mode: "set" to an exact date, "add" days, or "none" for no expiry."""
+    customer = _get_customer_or_none(db, username)
+    if customer is None:
+        return _redirect("/dashboard", flash=f"No customer {username!r}", flash_kind="error")
+    page = f"/dashboard/customers/{username}"
+
+    if mode == "none":
+        new_expiry = None
+    elif mode == "add":
+        if days == 0:
+            return _redirect(page, flash="Enter a number of days", flash_kind="error")
+        now = datetime.now(timezone.utc)
+        current = customer.expires_at
+        if current is not None and current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        # Adding days stacks on remaining time, like a payment; removing days counts from the current expiry.
+        base = current if current is not None and (current > now or days < 0) else now
+        new_expiry = base + timedelta(days=days)
+    elif mode == "set":
+        try:
+            new_expiry = datetime.strptime(expires_at, "%Y-%m-%dT%H:%M").replace(tzinfo=EAT).astimezone(timezone.utc)
+        except ValueError:
+            return _redirect(page, flash="Pick a valid date and time", flash_kind="error")
+    else:
+        return _redirect(page, flash="Unknown expiry action", flash_kind="error")
+
+    services.set_expiry(db, gw.ppp, customer, new_expiry, static_mgr=gw.static)
+    if new_expiry is None:
+        flash = f"{username} now has no expiry"
+    else:
+        flash = f"{username} now expires {new_expiry.astimezone(EAT).strftime('%d %b %Y, %H:%M')} EAT"
+        if customer.status.value == "expired":
+            flash += " (in the past - disconnected)"
+    return _redirect(page, flash=flash)
 
 
 @router.post("/customers/{username}/plan")
