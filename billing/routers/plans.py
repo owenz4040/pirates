@@ -6,13 +6,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from billing import services
+from billing.auth import require_admin
 from billing.db import get_db
 from billing.mikrotik_dep import get_router_api
 from billing.models import Plan
 from billing.schemas import PlanCreate, PlanOut, PlanUpdate
 from mikrotik.bandwidth import BandwidthProfileManager
 
-router = APIRouter(prefix="/plans", tags=["plans"])
+router = APIRouter(prefix="/plans", tags=["plans"], dependencies=[Depends(require_admin)])
 
 
 @router.get("", response_model=list[PlanOut])

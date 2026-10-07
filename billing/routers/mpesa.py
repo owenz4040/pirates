@@ -11,9 +11,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from billing import services
+from billing.auth import require_admin
 from billing.db import get_db
 from billing.email import client as email_client
-from billing.models import Customer, Payment
+from billing.models import Customer, Payment, PaymentStatus
 from billing.mpesa import paystack
 from billing.mpesa.paystack import PaystackError
 from billing.schemas import _normalize_kenyan_phone
@@ -23,7 +24,7 @@ from mikrotik.pppoe import PPPoEManager
 router = APIRouter(tags=["mpesa"])
 
 
-@router.post("/customers/{username}/mpesa/charge", status_code=202)
+@router.post("/customers/{username}/mpesa/charge", status_code=202, dependencies=[Depends(require_admin)])
 def charge(username: str, db: Session = Depends(get_db)) -> dict[str, Any]:
     """Push an M-Pesa PIN prompt to the customer's phone, via Paystack, for their plan's price."""
     customer = db.scalar(select(Customer).where(Customer.pppoe_username == username))
@@ -36,7 +37,7 @@ def charge(username: str, db: Session = Depends(get_db)) -> dict[str, Any]:
     return {"reference": reference}
 
 
-@router.post("/customers/{username}/mpesa/paybill", status_code=202)
+@router.post("/customers/{username}/mpesa/paybill", status_code=202, dependencies=[Depends(require_admin)])
 def paybill_charge(username: str, db: Session = Depends(get_db)) -> dict[str, Any]:
     """
     Generate a one-time Paystack paybill code for this customer's plan price.
@@ -140,6 +141,10 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)) -> d
 
     if payment is None:
         return {"status": "ignored"}
+    if payment.status != PaymentStatus.pending:
+        # Paystack retries/duplicates the same event - already handled, and
+        # confirming again would extend the subscription a second time.
+        return {"status": "duplicate"}
 
     if result["event"] == "charge.success" and result["status"] == "success":
         from mikrotik.static_user import StaticUserManager

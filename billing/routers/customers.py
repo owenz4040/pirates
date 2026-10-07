@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from billing import services
+from billing.auth import require_admin
 from billing.db import get_db
 from billing.mikrotik_dep import get_router_api
 from billing.models import Customer, Plan
@@ -22,7 +23,7 @@ from billing.schemas import (
 from mikrotik.pppoe import PPPoEManager
 from mikrotik.static_user import StaticUserManager
 
-router = APIRouter(prefix="/customers", tags=["customers"])
+router = APIRouter(prefix="/customers", tags=["customers"], dependencies=[Depends(require_admin)])
 
 
 def _get_customer(db: Session, username: str) -> Customer:
