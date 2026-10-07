@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from librouteros.api import Api
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from billing import services
+from billing import router_sync, services
 from billing.auth import require_admin
 from billing.db import get_db
-from billing.mikrotik_dep import get_router_api
+from billing.router_sync import RouterGateway, get_router
 from billing.models import Customer, Plan
 from billing.email import client as email_client
 from billing.schemas import (
@@ -20,8 +19,6 @@ from billing.schemas import (
     CustomerStatusOut,
     CustomerUpdate,
 )
-from mikrotik.pppoe import PPPoEManager
-from mikrotik.static_user import StaticUserManager
 
 router = APIRouter(prefix="/customers", tags=["customers"], dependencies=[Depends(require_admin)])
 
@@ -42,7 +39,7 @@ def list_customers(db: Session = Depends(get_db)) -> list[Customer]:
 def create_customer(
     payload: CustomerCreate,
     db: Session = Depends(get_db),
-    api: Api = Depends(get_router_api),
+    gw: RouterGateway = Depends(get_router),
 ) -> dict:
     plan = db.get(Plan, payload.plan_id)
     if plan is None:
@@ -50,8 +47,8 @@ def create_customer(
     if db.scalar(select(Customer).where(Customer.pppoe_username == payload.pppoe_username)):
         raise HTTPException(409, f"Account username {payload.pppoe_username!r} already exists")
 
-    ppp = PPPoEManager(api)
-    static_mgr = StaticUserManager(api)
+    ppp = gw.ppp
+    static_mgr = gw.static
     customer = services.create_customer(
         db,
         ppp,
@@ -87,18 +84,12 @@ def create_customer(
 
 
 @router.get("/{username}", response_model=CustomerStatusOut)
-def get_customer(
-    username: str,
-    db: Session = Depends(get_db),
-    api: Api = Depends(get_router_api),
-) -> dict:
+def get_customer(username: str, db: Session = Depends(get_db)) -> dict:
     customer = _get_customer(db, username)
-    ppp = PPPoEManager(api)
-    static_mgr = StaticUserManager(api)
     if customer.connection_type.value == "static":
-        online = not static_mgr.is_suspended(customer.static_ip) if customer.static_ip else False
+        online = customer.status.value == "active" and bool(customer.static_ip)
     else:
-        online = ppp.is_online(username)
+        online = username.strip().lower() in router_sync.active_usernames(db)
     return {
         **CustomerOut.model_validate(customer).model_dump(),
         "online": online,
@@ -110,11 +101,11 @@ def update_customer(
     username: str,
     payload: CustomerUpdate,
     db: Session = Depends(get_db),
-    api: Api = Depends(get_router_api),
+    gw: RouterGateway = Depends(get_router),
 ) -> Customer:
     """Edit contact details and static IP."""
     customer = _get_customer(db, username)
-    static_mgr = StaticUserManager(api)
+    static_mgr = gw.static
     try:
         return services.update_customer_details(
             db,
@@ -134,11 +125,11 @@ def update_customer(
 def suspend_customer(
     username: str,
     db: Session = Depends(get_db),
-    api: Api = Depends(get_router_api),
+    gw: RouterGateway = Depends(get_router),
 ) -> Customer:
     customer = _get_customer(db, username)
-    ppp = PPPoEManager(api)
-    static_mgr = StaticUserManager(api)
+    ppp = gw.ppp
+    static_mgr = gw.static
     return services.suspend_customer(db, ppp, customer, static_mgr=static_mgr)
 
 
@@ -147,13 +138,13 @@ def change_customer_plan(
     username: str,
     payload: ChangePlan,
     db: Session = Depends(get_db),
-    api: Api = Depends(get_router_api),
+    gw: RouterGateway = Depends(get_router),
 ) -> Customer:
     """Move a customer to a different plan (e.g. a bandwidth upgrade). Applies on the router immediately if they're active."""
     customer = _get_customer(db, username)
     new_plan = db.get(Plan, payload.plan_id)
     if new_plan is None:
         raise HTTPException(404, f"No plan with id {payload.plan_id}")
-    ppp = PPPoEManager(api)
-    static_mgr = StaticUserManager(api)
+    ppp = gw.ppp
+    static_mgr = gw.static
     return services.change_plan(db, ppp, customer, new_plan, static_mgr=static_mgr)

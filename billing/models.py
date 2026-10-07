@@ -5,7 +5,7 @@ import secrets
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Numeric, String, func
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from billing.db import Base
@@ -96,3 +96,50 @@ class Payment(Base):
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     customer: Mapped["Customer"] = relationship(back_populates="payments")
+
+
+class RouterCommandStatus(str, enum.Enum):
+    pending = "pending"  # queued, the router hasn't picked it up yet
+    sent = "sent"  # handed to the router, waiting for its acknowledgement
+    done = "done"
+    failed = "failed"
+
+
+class RouterCommand(Base):
+    """
+    One queued RouterOS script line. The app can't reach the router, so every
+    router change is written here (in the same transaction as the billing
+    change that caused it) and the router pulls them on its next sync.
+    """
+
+    __tablename__ = "router_commands"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    description: Mapped[str] = mapped_column(String(255))
+    script: Mapped[str] = mapped_column(Text)
+    status: Mapped[RouterCommandStatus] = mapped_column(
+        Enum(RouterCommandStatus, name="router_command_status"), default=RouterCommandStatus.pending, index=True
+    )
+    attempts: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RouterDevice(Base):
+    """The MikroTik that syncs with this app, and what it last reported about itself."""
+
+    __tablename__ = "router_devices"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), default="Main router")
+    # Sent by the router in the X-Pirates-Token header on every sync.
+    token: Mapped[str] = mapped_column(String(64), unique=True, default=lambda: secrets.token_hex(24))
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    board: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    uptime: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    cpu_load: Mapped[int | None] = mapped_column(nullable=True)
+    active_usernames: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

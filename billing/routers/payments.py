@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from librouteros.api import Api
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from billing import services
 from billing.auth import require_admin
 from billing.db import get_db
-from billing.mikrotik_dep import get_router_api
+from billing.router_sync import RouterGateway, get_router
 from billing.models import Customer, Payment
 from billing.schemas import PaymentCreate, PaymentOut
-from mikrotik.pppoe import PPPoEManager
 
 router = APIRouter(prefix="/customers/{username}/payments", tags=["payments"], dependencies=[Depends(require_admin)])
 
@@ -29,7 +27,7 @@ def record_payment(
     username: str,
     payload: PaymentCreate,
     db: Session = Depends(get_db),
-    api: Api = Depends(get_router_api),
+    gw: RouterGateway = Depends(get_router),
 ) -> Payment:
     """
     Manual payment entry: records the payment, extends the subscription, and
@@ -42,10 +40,8 @@ def record_payment(
     if customer is None:
         raise HTTPException(404, f"No customer {username!r}")
 
-    from mikrotik.static_user import StaticUserManager
-
-    ppp = PPPoEManager(api)
-    static_mgr = StaticUserManager(api)
+    ppp = gw.ppp
+    static_mgr = gw.static
     return services.record_payment(
         db,
         ppp,

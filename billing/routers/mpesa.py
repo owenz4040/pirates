@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from billing import services
+from billing import router_sync, services
 from billing.auth import require_admin
 from billing.db import get_db
 from billing.email import client as email_client
@@ -18,8 +18,6 @@ from billing.models import Customer, Payment, PaymentStatus
 from billing.mpesa import paystack
 from billing.mpesa.paystack import PaystackError
 from billing.schemas import _normalize_kenyan_phone
-from mikrotik.client import router_connection
-from mikrotik.pppoe import PPPoEManager
 
 router = APIRouter(tags=["mpesa"])
 
@@ -96,7 +94,7 @@ def public_mpesa_prompt(username: str, token: str, db: Session = Depends(get_db)
         _pay_page(
             "Check your phone",
             f"An M-Pesa PIN prompt has been sent to {customer.phone_number}. Enter your PIN to complete "
-            "payment - your internet activates automatically once it's confirmed.",
+            "payment - your internet reconnects automatically within about a minute of confirmation.",
             ok=True,
         )
     )
@@ -147,19 +145,16 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)) -> d
         return {"status": "duplicate"}
 
     if result["event"] == "charge.success" and result["status"] == "success":
-        from mikrotik.static_user import StaticUserManager
-
-        with router_connection() as api:
-            ppp = PPPoEManager(api)
-            static_mgr = StaticUserManager(api)
-            payment = services.confirm_payment(
-                db,
-                ppp,
-                payment,
-                mpesa_receipt=str(result["paystack_transaction_id"]),
-                raw_callback=payload,
-                static_mgr=static_mgr,
-            )
+        # Queues the reconnect - the router applies it on its next sync (within a minute).
+        gw = router_sync.gateway(db)
+        payment = services.confirm_payment(
+            db,
+            gw.ppp,
+            payment,
+            mpesa_receipt=str(result["paystack_transaction_id"]),
+            raw_callback=payload,
+            static_mgr=gw.static,
+        )
         if payment.customer.email:
             try:
                 subject, html, text = services.compose_receipt_email(payment.customer, payment)

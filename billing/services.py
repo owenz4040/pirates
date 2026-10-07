@@ -143,10 +143,21 @@ def record_payment(
         confirmed_at=now,
     )
     db.add(payment)
+    _reactivate_on_router(customer, ppp, static_mgr)
     db.commit()
     db.refresh(customer)
     db.refresh(payment)
+    return payment
 
+
+def _reactivate_on_router(
+    customer: Customer, ppp: PPPoEManager | None, static_mgr: StaticUserManager | None
+) -> None:
+    """
+    Put a paid-up customer back on their plan's speed and let them online.
+    Called before commit so queued router commands save in the same
+    transaction as the payment.
+    """
     if customer.connection_type == ConnectionType.static:
         if static_mgr:
             static_mgr.set_bandwidth(customer.pppoe_username, customer.plan.rate_limit)
@@ -156,7 +167,6 @@ def record_payment(
         if ppp:
             ppp.set_profile(customer.pppoe_username, customer.plan.name)
             ppp.enable_user(customer.pppoe_username)
-    return payment
 
 
 def create_pending_payment(
@@ -412,19 +422,10 @@ def confirm_payment(
     payment.raw_callback = raw_callback
     payment.confirmed_at = now
     db.add(payment)
+    _reactivate_on_router(customer, ppp, static_mgr)
     db.commit()
     db.refresh(customer)
     db.refresh(payment)
-
-    if customer.connection_type == ConnectionType.static:
-        if static_mgr:
-            static_mgr.set_bandwidth(customer.pppoe_username, customer.plan.rate_limit)
-            if customer.static_ip:
-                static_mgr.restore_user(customer.static_ip)
-    else:
-        if ppp:
-            ppp.set_profile(customer.pppoe_username, customer.plan.name)
-            ppp.enable_user(customer.pppoe_username)
     return payment
 
 
@@ -530,8 +531,6 @@ def change_plan(
 ) -> Customer:
     customer.plan_id = new_plan.id
     db.add(customer)
-    db.commit()
-    db.refresh(customer)
     if customer.status == CustomerStatus.active:
         if customer.connection_type == ConnectionType.static:
             if static_mgr:
@@ -539,6 +538,8 @@ def change_plan(
         else:
             if ppp:
                 ppp.set_profile(customer.pppoe_username, new_plan.name)
+    db.commit()
+    db.refresh(customer)
     return customer
 
 

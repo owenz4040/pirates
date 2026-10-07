@@ -1,12 +1,12 @@
 """
-Expiry sweep: suspends every active customer whose expires_at has passed.
+Expiry sweep and reminders.
 
-One-shot by design - run it on a schedule (Windows Task Scheduler, cron,
-systemd timer) rather than as a long-lived daemon. Nothing here needs to run
-more than once every few minutes; a monthly cutoff doesn't need per-second
-precision.
+On Vercel this runs two ways: the expiry sweep piggybacks on every router
+sync (so it runs once a minute for free), and the daily Vercel cron calls
+run_daily() for reminders plus a backup sweep. Router changes are queued,
+not applied here - the router picks them up on its next sync.
 
-Usage:
+Usage (manual run against the configured database):
     python -m billing.worker
 """
 
@@ -16,28 +16,33 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from sqlalchemy.orm import Session  # noqa: E402
+
 from billing.db import SessionLocal  # noqa: E402
-from billing.services import expire_overdue_customers  # noqa: E402
-from mikrotik.client import router_connection  # noqa: E402
-from mikrotik.pppoe import PPPoEManager  # noqa: E402
-from mikrotik.static_user import StaticUserManager  # noqa: E402
+from billing.router_sync import gateway  # noqa: E402
+from billing.services import expire_overdue_customers, send_expiry_reminders  # noqa: E402
+
+
+def expire_sweep(db: Session) -> list[str]:
+    gw = gateway(db)
+    expired = expire_overdue_customers(db, ppp=gw.ppp, static_mgr=gw.static)
+    return [customer.pppoe_username for customer in expired]
+
+
+def run_daily(db: Session) -> dict[str, object]:
+    count_2, count_1 = send_expiry_reminders(db)
+    expired = expire_sweep(db)
+    return {"reminders_2_day": count_2, "reminders_1_day": count_1, "expired": expired}
 
 
 def main() -> None:
     db = SessionLocal()
     try:
-        from billing.services import send_expiry_reminders
-        count_2, count_1 = send_expiry_reminders(db)
-        if count_2 or count_1:
-            print(f"Sent {count_2}x 2-day reminders and {count_1}x 1-day reminders.")
-
-        with router_connection() as api:
-            ppp = PPPoEManager(api)
-            static_mgr = StaticUserManager(api)
-            expired = expire_overdue_customers(db, ppp=ppp, static_mgr=static_mgr)
-        for customer in expired:
-            print(f"Expired {customer.pppoe_username} (was due {customer.expires_at.isoformat()})")
-        if not expired:
+        result = run_daily(db)
+        print(f"Sent {result['reminders_2_day']}x 2-day and {result['reminders_1_day']}x 1-day reminders.")
+        for username in result["expired"]:
+            print(f"Expired {username} (queued for the router)")
+        if not result["expired"]:
             print("No overdue customers.")
     finally:
         db.close()

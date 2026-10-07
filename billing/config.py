@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     # button, since email clients can't resolve localhost.
     public_base_url: str = ""
 
+    # Vercel Cron sends this as `Authorization: Bearer <CRON_SECRET>` when it
+    # calls /api/cron/daily. Set the same value in the Vercel project env.
+    cron_secret: str = ""
+
 
 settings = Settings()
 
