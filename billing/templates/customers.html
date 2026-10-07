@@ -37,6 +37,111 @@
   </div>
 </div>
 
+
+{% set this_month = income[-1] %}
+{% set last_month = income[-2] %}
+{% set year_total = income|sum(attribute="total_kes") %}
+<h2>Income</h2>
+<div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">
+  <div class="stat-card">
+    <div class="stat-label">This month ({{ this_month.label }})</div>
+    <div class="stat-value">KES {{ "{:,.0f}".format(this_month.total_kes) }}</div>
+    <div class="muted">{{ this_month.payments }} payment{{ "s" if this_month.payments != 1 }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Last month ({{ last_month.label }})</div>
+    <div class="stat-value">KES {{ "{:,.0f}".format(last_month.total_kes) }}</div>
+    <div class="muted">{{ last_month.payments }} payment{{ "s" if last_month.payments != 1 }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Last 12 months</div>
+    <div class="stat-value">KES {{ "{:,.0f}".format(year_total) }}</div>
+    <div class="muted">{{ income|sum(attribute="payments") }} payments</div>
+  </div>
+</div>
+
+<div class="panel income-panel">
+  <span class="panel-title">Income per month</span>
+  <p class="muted" style="margin:-12px 0 12px">Confirmed payments (M-Pesa and cash), by month in Kenya time.</p>
+  {% set ch = income_chart %}
+  {% if ch.empty %}
+    <p class="muted">No payments recorded in the last 12 months yet.</p>
+  {% else %}
+  <div class="income-chart">
+    <svg viewBox="0 0 {{ ch.width }} {{ ch.height }}" role="img" aria-label="Income per month for the last 12 months">
+      {% for t in ch.ticks %}
+      <line x1="{{ ch.left }}" x2="{{ ch.right }}" y1="{{ t.y }}" y2="{{ t.y }}" class="grid{{ ' base' if loop.first }}"/>
+      <text x="{{ ch.left - 8 }}" y="{{ t.y + 4 }}" text-anchor="end" class="tick">{{ ("{:g}k".format(t.value / 1000)) if t.value >= 1000 else "{:g}".format(t.value) }}</text>
+      {% endfor %}
+      {% for b in ch.bars %}
+      {% if b.path %}<path d="{{ b.path }}" class="bar"/>{% endif %}
+      <text x="{{ b.cx }}" y="{{ ch.baseline + 18 }}" text-anchor="middle" class="tick">{{ b.short }}</text>
+      {% if loop.last and b.path %}
+      <text x="{{ b.cx }}" y="{{ b.y - 6 }}" text-anchor="middle" class="value">{{ "{:,.0f}".format(b.month.total_kes) }}</text>
+      {% endif %}
+      <rect x="{{ b.slot_x }}" y="{{ ch.top }}" width="{{ b.slot_w }}" height="{{ ch.baseline - ch.top }}" class="hit"
+            data-label="{{ b.month.label }}" data-total="KES {{ '{:,.0f}'.format(b.month.total_kes) }}"
+            data-count="{{ b.month.payments }} payment{{ 's' if b.month.payments != 1 }}"/>
+      {% endfor %}
+    </svg>
+    <div class="income-tip" hidden></div>
+  </div>
+  {% endif %}
+  <details style="margin-top:12px">
+    <summary class="muted" style="cursor:pointer">Show as table</summary>
+    <div class="table-wrapper" style="margin-top:12px">
+      <table>
+        <thead><tr><th>Month</th><th>Payments</th><th>Income (KES)</th></tr></thead>
+        <tbody>
+          {% for m in income|reverse %}
+          <tr><td data-label="Month">{{ m.label }}</td><td data-label="Payments">{{ m.payments }}</td><td data-label="Income (KES)">{{ "{:,.0f}".format(m.total_kes) }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+</div>
+
+<style>
+  .income-chart { position: relative; }
+  .income-chart svg { width: 100%; height: auto; display: block; }
+  .income-chart .grid { stroke: rgba(255,255,255,0.07); stroke-width: 1; }
+  .income-chart .grid.base { stroke: rgba(255,255,255,0.25); }
+  .income-chart .tick { fill: var(--muted); font-size: 11px; font-family: inherit; }
+  .income-chart .value { fill: var(--text); font-size: 12px; font-weight: 600; font-family: inherit; }
+  .income-chart .bar { fill: #c9a24b; }
+  .income-chart .hit { fill: transparent; cursor: default; }
+  .income-chart .hit:hover { fill: rgba(255,255,255,0.04); }
+  .income-tip { position: absolute; pointer-events: none; background: #1b2130; border: 1px solid var(--border); border-radius: 8px;
+                padding: 8px 12px; font-size: 0.85rem; white-space: nowrap; transform: translate(-50%, -100%); box-shadow: 0 6px 20px rgba(0,0,0,0.4); }
+  .income-tip strong { display: block; color: var(--text); }
+  .income-tip span { color: var(--muted); }
+  @media (max-width: 700px) { .stat-grid[style] { grid-template-columns: 1fr !important; } }
+</style>
+<script>
+  (() => {
+    const chart = document.querySelector(".income-chart");
+    if (!chart) return;
+    const tip = chart.querySelector(".income-tip");
+    chart.querySelectorAll(".hit").forEach((hit) => {
+      hit.addEventListener("mouseenter", () => {
+        tip.innerHTML = "";
+        const head = document.createElement("strong");
+        head.textContent = hit.dataset.total;
+        const sub = document.createElement("span");
+        sub.textContent = `${hit.dataset.label} · ${hit.dataset.count}`;
+        tip.append(head, sub);
+        const box = hit.getBoundingClientRect(), outer = chart.getBoundingClientRect();
+        tip.style.left = `${box.left - outer.left + box.width / 2}px`;
+        tip.style.top = `${box.top - outer.top + 8}px`;
+        tip.hidden = false;
+      });
+      hit.addEventListener("mouseleave", () => (tip.hidden = true));
+    });
+  })();
+</script>
+
+<h2>Customers</h2>
 <div class="filter-tabs">
   <a href="/dashboard?filter=all" class="filter-tab {% if filter_type == 'all' %}active{% endif %}">All</a>
   <a href="/dashboard?filter=active" class="filter-tab {% if filter_type == 'active' %}active{% endif %}">Active</a>
