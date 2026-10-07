@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     # must send from the "resend.dev" testing address below.
     resend_api_key: str = ""
     resend_from_address: str = "Pirates <onboarding@resend.dev>"
+    # Where customer replies go. The From address's domain has no inbox, so
+    # without this replies bounce - which hurts sender reputation too.
+    email_reply_to: str = ""
 
     # Public URL this server is reachable at (the cloudflared tunnel URL for
     # now) - needed to build absolute links in emails, like the "Pay Now"
