@@ -261,11 +261,14 @@ def create_customer(
 
     if not customer.email:
         return _redirect(f"/dashboard/customers/{pppoe_username}", flash=f"Created {pppoe_username}")
+    paybill_info, paybill_error = services.try_paybill_charge(db, customer)
     try:
-        paybill_info = services.request_paybill_charge(db, customer)
         subject, html, text = services.compose_welcome_email(customer, paybill_info)
         email_client.send_email(customer.email, subject, html, text)
         flash, flash_kind = f"Created {pppoe_username} and sent welcome email", "ok"
+        if paybill_error:
+            flash += f" without a paybill code (Paystack: {paybill_error})"
+            flash_kind = "error"
     except Exception as exc:  # noqa: BLE001 - the welcome email is best-effort, never fatal to signup
         flash, flash_kind = f"Created {pppoe_username}, but welcome email failed: {exc}", "error"
     return _redirect(f"/dashboard/customers/{pppoe_username}", flash=flash, flash_kind=flash_kind)
@@ -299,6 +302,25 @@ def customer_page(
             **_flash_context(request),
         },
     )
+
+
+@router.post("/customers/{username}/welcome")
+def resend_welcome(username: str, db: Session = Depends(get_db)):
+    customer = _get_customer_or_none(db, username)
+    if customer is None:
+        return _redirect("/dashboard", flash=f"No customer {username!r}", flash_kind="error")
+    page = f"/dashboard/customers/{username}"
+    if not customer.email:
+        return _redirect(page, flash="Add an email address first", flash_kind="error")
+    paybill_info, paybill_error = services.try_paybill_charge(db, customer)
+    try:
+        subject, html, text = services.compose_welcome_email(customer, paybill_info)
+        email_client.send_email(customer.email, subject, html, text)
+    except Exception as exc:  # noqa: BLE001 - surface the provider's reason to the admin
+        return _redirect(page, flash=f"Welcome email failed: {exc}", flash_kind="error")
+    if paybill_error:
+        return _redirect(page, flash=f"Sent to {customer.email} without a paybill code (Paystack: {paybill_error})", flash_kind="error")
+    return _redirect(page, flash=f"Welcome email sent to {customer.email}")
 
 
 @router.post("/customers/{username}/suspend")
