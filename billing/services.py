@@ -6,7 +6,6 @@ not a FastAPI request) can call the same functions instead of duplicating them.
 
 from __future__ import annotations
 
-import html as html_module
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -18,11 +17,21 @@ from sqlalchemy.orm import Session
 
 from billing.config import settings
 from billing.email import client as email_client
+from billing.email.layout import BRAND, Email
+from billing.email.layout import render as render_email
 from billing.models import ConnectionType, Customer, CustomerStatus, Payment, PaymentStatus, Plan
 from billing.mpesa import paystack
 from mikrotik.bandwidth import BandwidthProfileManager
 from mikrotik.pppoe import PPPoEManager
 from mikrotik.static_user import StaticUserManager
+
+_EAT = timezone(timedelta(hours=3), "EAT")
+
+
+def _fmt_eat(value: datetime) -> str:
+    if value.tzinfo is None:  # stored as UTC
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(_EAT).strftime("%d %b %Y, %H:%M") + " EAT"
 
 
 def create_customer(
@@ -280,127 +289,65 @@ def _plan_speed_label(plan: Plan) -> str:
     return f"{value}{unit}bps"
 
 
+def _pay_link(customer: Customer) -> str | None:
+    if not settings.public_base_url:
+        return None
+    return f"{settings.public_base_url.rstrip('/')}/pay/{customer.pppoe_username}/{customer.pay_token}/mpesa"
+
+
+def _payment_details(paybill_info: dict[str, Any]) -> list[tuple[str, str]]:
+    return [
+        ("Amount", f"KES {paybill_info['amount_kes']}"),
+        ("M-Pesa Paybill", str(paybill_info["paybill"])),
+        ("Account number", str(paybill_info["account_number"])),
+    ]
+
+
+def _pay_button(customer: Customer, label: str) -> dict[str, Any]:
+    url = _pay_link(customer)
+    if not url:
+        return {}
+    return {
+        "button": (label, url),
+        "button_note": "This sends an M-Pesa payment request to your registered phone number for you to approve.",
+    }
+
+
 def compose_welcome_email(customer: Customer, paybill_info: dict[str, Any]) -> tuple[str, str, str]:
-    """
-    Returns (subject, html, text) for the welcome email.
-    Uses a plain, text-focused HTML design to avoid spam filters.
-    """
-    name = html_module.escape(customer.full_name)
-    speed = html_module.escape(_plan_speed_label(customer.plan))
-    subject = f"Welcome aboard, {customer.full_name}!"
-
-    pay_button_html = ""
-    if settings.public_base_url:
-        pay_url = f"{settings.public_base_url}/pay/{customer.pppoe_username}/{customer.pay_token}/mpesa"
-        pay_button_html = f"""\
-            <table width="100%" border="0" cellspacing="0" cellpadding="0">
-              <tr>
-                <td align="center">
-                  <a href="{pay_url}" style="display: inline-block; background-color: #d97706; color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-bottom: 8px;">Tap to Pay with M-Pesa</a>
-                  <p style="margin: 0; color: #94a3b8; font-size: 13px;">(Sends a PIN prompt straight to {customer.phone_number})</p>
-                </td>
-              </tr>
-            </table>
-"""
-
-    html = f"""\
-<div style="font-family: sans-serif; color: #333; max-width: 600px; line-height: 1.5;">
-  <h2 style="color: #050810;">PIRATES WIFI</h2>
-  <p>Ahoy, {name}.</p>
-  <p>Your <strong>{speed}</strong> account has been prepared. Complete the payment below and set sail on the high seas of unlimited internet.</p>
-  
-  <div style="background-color: #f8f9fa; border: 1px solid #ddd; padding: 15px; margin: 20px 0;">
-    <h3 style="margin-top: 0;">Amount Due: KES {paybill_info['amount_kes']}</h3>
-    <p style="margin: 5px 0;"><strong>Paybill:</strong> {paybill_info['paybill']}</p>
-    <p style="margin: 5px 0;"><strong>Account:</strong> {paybill_info['account_number']}</p>
-  </div>
-
-{pay_button_html}
-  <p>Activates automatically the instant payment is confirmed - no need to contact us.</p>
-  <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
-  <p style="font-size: 12px; color: #666;">PIRATES WIFI &middot; Smooth Sailing Ahead</p>
-</div>
-"""
-
-    text_lines = [
-        "PIRATES WIFI",
-        "",
-        f"Ahoy, {customer.full_name}.",
-        "",
-        f"Your {_plan_speed_label(customer.plan)} account has been prepared. Complete the payment "
-        "below and set sail on the high seas of unlimited internet.",
-        "",
-        f"AMOUNT DUE: KES {paybill_info['amount_kes']}",
-        f"Paybill: {paybill_info['paybill']}",
-        f"Account: {paybill_info['account_number']}",
-    ]
-    if settings.public_base_url:
-        pay_url = f"{settings.public_base_url}/pay/{customer.pppoe_username}/{customer.pay_token}/mpesa"
-        text_lines += [
-            "",
-            f"Or pay instantly with M-Pesa: {pay_url}",
-            f"(Sends a PIN prompt straight to {customer.phone_number})",
-        ]
-    text_lines += [
-        "",
-        "Activates automatically the instant payment is confirmed - no need to contact us.",
-        "",
-        "PIRATES WIFI - Smooth Sailing Ahead",
-    ]
-    text = "\n".join(text_lines)
-
-    return subject, html, text
+    """Returns (subject, html, text) for the new-account email."""
+    return render_email(
+        Email(
+            subject=f"Your {BRAND} account is ready",
+            greeting_name=customer.full_name,
+            intro=(
+                f"Your {_plan_speed_label(customer.plan)} internet account ({customer.pppoe_username}) has been set up. "
+                "It will be activated as soon as your first payment is received."
+            ),
+            details=_payment_details(paybill_info),
+            **_pay_button(customer, "Pay with M-Pesa"),
+            outro="Your connection switches on automatically once payment is confirmed, usually within a minute.",
+            account=customer.pppoe_username,
+        )
+    )
 
 
 def compose_receipt_email(customer: Customer, payment: Payment) -> tuple[str, str, str]:
-    """
-    Returns (subject, html, text) for the payment-confirmation receipt.
-    Uses a plain, text-focused HTML design to avoid spam filters.
-    """
-    name = html_module.escape(customer.full_name)
-    speed = html_module.escape(_plan_speed_label(customer.plan))
-    subject = "Payment received - you're all set"
-    receipt_no = html_module.escape(payment.mpesa_receipt or f"PW-{payment.id}")
-    expires = customer.expires_at.strftime("%d %b %Y, %H:%M UTC")
-
-    html = f"""\
-<div style="font-family: sans-serif; color: #333; max-width: 600px; line-height: 1.5;">
-  <h2 style="color: #050810;">PIRATES WIFI - PAYMENT CONFIRMED</h2>
-  <p>Ahoy, {name}.</p>
-  <p>Your payment has cleared and your <strong>{speed}</strong> connection is active. Full speed ahead.</p>
-  
-  <div style="background-color: #f8f9fa; border: 1px solid #ddd; padding: 15px; margin: 20px 0;">
-    <h3 style="margin-top: 0;">Amount Paid: KES {payment.amount_kes}</h3>
-    <p style="margin: 5px 0;"><strong>Receipt No.:</strong> {receipt_no}</p>
-    <p style="margin: 5px 0;"><strong>Active Until:</strong> {expires}</p>
-  </div>
-
-  <p>Keep this receipt for your records. Fair winds until your next renewal.</p>
-  <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
-  <p style="font-size: 12px; color: #666;">PIRATES WIFI &middot; Smooth Sailing Ahead</p>
-</div>
-"""
-
-    text = "\n".join(
-        [
-            "PIRATES WIFI - PAYMENT CONFIRMED",
-            "",
-            f"Ahoy, {customer.full_name}.",
-            "",
-            f"Your payment has cleared and your {_plan_speed_label(customer.plan)} connection is active. "
-            "Full speed ahead.",
-            "",
-            f"AMOUNT PAID: KES {payment.amount_kes}",
-            f"Receipt No.: {payment.mpesa_receipt or f'PW-{payment.id}'}",
-            f"Active Until: {expires}",
-            "",
-            "Keep this receipt for your records. Fair winds until your next renewal.",
-            "",
-            "PIRATES WIFI - Smooth Sailing Ahead",
-        ]
+    """Returns (subject, html, text) for the payment receipt."""
+    expires = _fmt_eat(customer.expires_at) if customer.expires_at else "No expiry"
+    return render_email(
+        Email(
+            subject=f"Payment received - {BRAND} receipt",
+            greeting_name=customer.full_name,
+            intro=f"Thank you. We have received your payment and your {_plan_speed_label(customer.plan)} connection is active.",
+            details=[
+                ("Amount paid", f"KES {payment.amount_kes}"),
+                ("Receipt number", payment.mpesa_receipt or f"PW-{payment.id}"),
+                ("Active until", expires),
+            ],
+            outro="Please keep this email as your receipt.",
+            account=customer.pppoe_username,
+        )
     )
-
-    return subject, html, text
 
 
 def confirm_payment(
@@ -673,66 +620,20 @@ def expire_overdue_customers(
 
 
 def compose_reminder_email(customer: Customer, paybill_info: dict[str, Any], days_left: int) -> tuple[str, str, str]:
-    name = html_module.escape(customer.full_name)
-    subject = f"Ahoy! Your Pirates WiFi expires in {days_left} {'day' if days_left == 1 else 'days'}"
-    
-    pay_button_html = ""
-    if settings.public_base_url:
-        pay_url = f"{settings.public_base_url}/pay/{customer.pppoe_username}/{customer.pay_token}/mpesa"
-        pay_button_html = f"""\
-            <table width="100%" border="0" cellspacing="0" cellpadding="0">
-              <tr>
-                <td align="center">
-                  <a href="{pay_url}" style="display: inline-block; background-color: #d97706; color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 6px; font-weight: bold; font-size: 16px; margin-bottom: 8px;">Tap to Renew with M-Pesa</a>
-                  <p style="margin: 0; color: #94a3b8; font-size: 13px;">(Sends a PIN prompt straight to {customer.phone_number})</p>
-                </td>
-              </tr>
-            </table>
-"""
-
-    html = f"""\
-<div style="font-family: sans-serif; color: #333; max-width: 600px; line-height: 1.5;">
-  <h2 style="color: #050810;">PIRATES WIFI - EXPIRY REMINDER</h2>
-  <p>Ahoy, {name}.</p>
-  <p>This is a quick reminder that your internet subscription will expire in <strong>{days_left} {'day' if days_left == 1 else 'days'}</strong>.</p>
-  
-  <div style="background-color: #f8f9fa; border: 1px solid #ddd; padding: 15px; margin: 20px 0;">
-    <h3 style="margin-top: 0;">Amount Due: KES {paybill_info['amount_kes']}</h3>
-    <p style="margin: 5px 0;"><strong>Paybill:</strong> {paybill_info['paybill']}</p>
-    <p style="margin: 5px 0;"><strong>Account:</strong> {paybill_info['account_number']}</p>
-  </div>
-
-{pay_button_html}
-  <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
-  <p style="font-size: 12px; color: #666;">PIRATES WIFI &middot; Smooth Sailing Ahead</p>
-</div>
-"""
-
-    text_lines = [
-        "PIRATES WIFI - EXPIRY REMINDER",
-        "",
-        f"Ahoy, {customer.full_name}.",
-        "",
-        f"This is a quick reminder that your internet subscription will expire in {days_left} {'day' if days_left == 1 else 'days'}.",
-        "",
-        f"AMOUNT DUE: KES {paybill_info['amount_kes']}",
-        f"Paybill: {paybill_info['paybill']}",
-        f"Account: {paybill_info['account_number']}",
-    ]
-    if settings.public_base_url:
-        pay_url = f"{settings.public_base_url}/pay/{customer.pppoe_username}/{customer.pay_token}/mpesa"
-        text_lines += [
-            "",
-            f"Or renew instantly with M-Pesa: {pay_url}",
-            f"(Sends a PIN prompt straight to {customer.phone_number})",
-        ]
-    text_lines += [
-        "",
-        "PIRATES WIFI - Smooth Sailing Ahead",
-    ]
-    text = "\n".join(text_lines)
-
-    return subject, html, text
+    """Returns (subject, html, text) for the upcoming-expiry reminder."""
+    when = "tomorrow" if days_left == 1 else f"in {days_left} days"
+    expires = _fmt_eat(customer.expires_at) if customer.expires_at else ""
+    return render_email(
+        Email(
+            subject=f"Your {BRAND} subscription ends {when}",
+            greeting_name=customer.full_name,
+            intro=f"Your internet subscription ends {when}{' (' + expires + ')' if expires else ''}. "
+            "To stay connected without interruption, renew before then.",
+            details=_payment_details(paybill_info),
+            **_pay_button(customer, "Renew with M-Pesa"),
+            account=customer.pppoe_username,
+        )
+    )
 
 
 def send_expiry_reminders(db: Session) -> tuple[int, int]:

@@ -45,6 +45,8 @@ def send_email(to: str, subject: str, html: str, text: str | None = None) -> Non
     }
     if text:
         payload["text"] = text
+    if settings.email_reply_to:
+        payload["reply_to"] = settings.email_reply_to
     try:
         response = resend.Emails.send(payload)
     except Exception as exc:  # noqa: BLE001 - Resend's SDK exception types aren't documented; normalize all of them
