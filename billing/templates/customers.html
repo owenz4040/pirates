@@ -3,6 +3,21 @@
 {% block content %}
 <h1>Dashboard</h1>
 
+{% if unimported %}
+<div class="panel" style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;border-color:var(--border-gold)">
+  <div>
+    <strong>{{ unimported }} PPPoE user{{ "s" if unimported != 1 }} on your router {{ "aren't" if unimported != 1 else "isn't" }} in billing yet.</strong>
+    <div class="muted">Import them to track their payments and expiry dates. Nobody gets disconnected.</div>
+  </div>
+  <a href="/dashboard/router/import"><button type="button">Import now</button></a>
+</div>
+{% elif unimported is none %}
+<div class="panel" style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+  <div class="muted">Already have PPPoE users on your MikroTik? Bring them into billing.</div>
+  <a href="/dashboard/router/import"><button type="button" class="secondary">Import from router</button></a>
+</div>
+{% endif %}
+
 <div class="stat-grid">
   <div class="stat-card">
     <div class="stat-label">Total customers</div>

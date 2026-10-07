@@ -22,7 +22,7 @@ from billing.db import get_db
 from billing.email import client as email_client
 from billing.router_sync import RouterGateway, get_router
 from billing.config import settings
-from billing.models import ConnectionType, Customer, Plan, RouterCommand, RouterCommandStatus
+from billing.models import ConnectionType, Customer, Plan, RouterCommand, RouterCommandStatus, RouterDevice
 from billing.mpesa import paystack
 from billing.mpesa.paystack import PaystackError
 from billing.schemas import _normalize_kenyan_phone, _validate_ip
@@ -108,7 +108,26 @@ def customers_page(
     return templates.TemplateResponse(
         request,
         "customers.html",
-        {"customers": rows, "plans": plans, "stats": stats, "filter_type": filter, **_flash_context(request)},
+        {
+            "customers": rows,
+            "plans": plans,
+            "stats": stats,
+            "filter_type": filter,
+            "unimported": _unimported_count(db, {c.pppoe_username.lower() for c in customers}),
+            **_flash_context(request),
+        },
+    )
+
+
+def _unimported_count(db: Session, existing: set[str]) -> int | None:
+    """PPPoE users in the router's last export that aren't billing customers yet (None if never exported)."""
+    device = db.scalar(select(RouterDevice).order_by(RouterDevice.id))
+    if device is None or device.router_secrets is None:
+        return None
+    return sum(
+        1
+        for s in device.router_secrets
+        if s.get("service", "") in IMPORTABLE_SERVICES and s["name"].lower() not in existing
     )
 
 
