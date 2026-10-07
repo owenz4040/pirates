@@ -90,7 +90,7 @@ class CustomerOut(BaseModel):
     id: int
     pppoe_username: str
     full_name: str
-    phone_number: str
+    phone_number: str | None
     email: str | None
     connection_type: ConnectionType
     static_ip: str | None

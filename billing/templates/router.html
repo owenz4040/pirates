@@ -66,7 +66,8 @@
     because passwords aren't stored here.
   </p>
   <div style="display:flex;gap:12px;flex-wrap:wrap">
-    <form method="post" action="/dashboard/router/resync"><button type="submit">Resync everything</button></form>
+    <a href="/dashboard/router/import"><button type="button">Import existing PPPoE users</button></a>
+    <form method="post" action="/dashboard/router/resync"><button type="submit" class="secondary">Resync everything</button></form>
     {% if counts.failed %}
     <form method="post" action="/dashboard/router/retry"><button type="submit" class="secondary">Retry {{ counts.failed }} failed</button></form>
     {% endif %}

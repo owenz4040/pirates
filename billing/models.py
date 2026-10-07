@@ -49,7 +49,9 @@ class Customer(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     pppoe_username: Mapped[str] = mapped_column(String(64), unique=True)
     full_name: Mapped[str] = mapped_column(String(128))
-    phone_number: Mapped[str] = mapped_column(String(20), unique=True)  # 2547XXXXXXXX, used for M-Pesa STK push
+    # 2547XXXXXXXX, used for M-Pesa STK push. Optional: users imported from the
+    # router have none until an admin adds it (unique still applies, NULLs aside).
+    phone_number: Mapped[str | None] = mapped_column(String(20), unique=True, nullable=True)
     email: Mapped[str | None] = mapped_column(String(128), nullable=True)  # optional - welcome email if present
     connection_type: Mapped[ConnectionType] = mapped_column(
         Enum(ConnectionType, name="connection_type"), default=ConnectionType.pppoe, server_default="pppoe"
@@ -142,4 +144,10 @@ class RouterDevice(Base):
     uptime: Mapped[str | None] = mapped_column(String(32), nullable=True)
     cpu_load: Mapped[int | None] = mapped_column(nullable=True)
     active_usernames: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Last export of /ppp secret and /ppp profile, for importing existing users.
+    # Passwords are never sent.
+    router_secrets: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    router_profiles: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    secrets_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    secrets_reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -317,3 +317,73 @@ def setup_script(base_url: str, token: str) -> str:
 /system scheduler add name="pirates-sync" interval=1m start-time=startup policy=ftp,read,write,policy,test on-event="/system script run pirates-sync"
 /system script run pirates-sync
 """
+
+
+# --- importing existing router users -------------------------------------------
+
+EXPORT_CHUNK = 20  # secrets per POST - keeps each request well under RouterOS 6 string limits
+# Built-in PPP profiles that aren't billing tiers.
+BUILTIN_PROFILES = {"default", "default-encryption"}
+
+
+def export_script(base_url: str, token: str) -> str:
+    """
+    Queued as a command: makes the router POST its PPP profiles and secrets to
+    /api/router/secrets in chunks. Tab-separated records, one per line; the
+    first line says which chunk this is, the last chunk ends with "end".
+    Passwords are deliberately not sent.
+    """
+    url = quote(f"{base_url.rstrip('/')}/api/router/secrets")
+    header = quote(f"X-Pirates-Token: {token}")
+    send = f"/tool fetch url={url} http-method=post http-header-field={header} output=none"
+    return (
+        ':local batch ""; :local n 0; :local part 0\n'
+        ':foreach i in=[/ppp profile find] do={'
+        ':set batch ($batch . "P\t" . [/ppp profile get $i name] . "\t" . [/ppp profile get $i rate-limit] . "\n")}\n'
+        ':foreach i in=[/ppp secret find] do={'
+        ':set batch ($batch . "S\t" . [/ppp secret get $i name] . "\t" . [/ppp secret get $i profile] . "\t" '
+        '. [/ppp secret get $i disabled] . "\t" . [/ppp secret get $i service] . "\t" . [/ppp secret get $i comment] . "\n"); '
+        ':set n ($n + 1); '
+        f':if ($n >= {EXPORT_CHUNK}) do={{{send} http-data=("part=" . $part . "\n" . $batch); '
+        ':set part ($part + 1); :set batch ""; :set n 0}}\n'
+        f'{send} http-data=("part=" . $part . "\nend\n" . $batch)'
+    )
+
+
+def request_secrets_export(db: Session, base_url: str) -> None:
+    device = get_or_create_device(db)
+    CommandSink(db).add("Send PPPoE users to billing for import", export_script(base_url, device.token))
+    device.secrets_requested_at = _now()
+    db.add(device)
+    db.commit()
+
+
+def ingest_secrets(db: Session, device: RouterDevice, body: str) -> None:
+    lines = body.replace("\r", "").split("\n")
+    header = lines[0] if lines else ""
+    part = int(header[5:]) if header.startswith("part=") and header[5:].isdigit() else 0
+
+    # Reassign (not mutate) the JSON lists so SQLAlchemy sees the change.
+    secrets_ = [] if part == 0 else list(device.router_secrets or [])
+    profiles = [] if part == 0 else list(device.router_profiles or [])
+    finished = False
+    for line in lines[1:]:
+        fields = line.split("\t")
+        if line == "end":
+            finished = True
+        elif fields[0] == "P" and len(fields) >= 2:
+            profiles.append({"name": fields[1], "rate_limit": fields[2] if len(fields) > 2 else ""})
+        elif fields[0] == "S" and len(fields) >= 3 and fields[1]:
+            secrets_.append({
+                "name": fields[1],
+                "profile": fields[2],
+                "disabled": len(fields) > 3 and fields[3].strip().lower() in {"true", "yes"},
+                "service": fields[4] if len(fields) > 4 else "",
+                "comment": fields[5] if len(fields) > 5 else "",
+            })
+    device.router_secrets = secrets_
+    device.router_profiles = profiles
+    if finished:
+        device.secrets_reported_at = _now()
+    db.add(device)
+    db.commit()

@@ -93,7 +93,7 @@ def public_mpesa_prompt(username: str, token: str, db: Session = Depends(get_db)
     return HTMLResponse(
         _pay_page(
             "Check your phone",
-            f"An M-Pesa PIN prompt has been sent to {customer.phone_number}. Enter your PIN to complete "
+            f"An M-Pesa payment request has been sent to {customer.phone_number}. Approve it on your phone to complete "
             "payment - your internet reconnects automatically within about a minute of confirmation.",
             ok=True,
         )

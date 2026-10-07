@@ -62,7 +62,7 @@
           </span>
         </td>
         <td data-label="Name">{{ row.customer.full_name }}</td>
-        <td data-label="Phone" class="muted">{{ row.customer.phone_number }}</td>
+        <td data-label="Phone" class="muted">{{ row.customer.phone_number or '-' }}</td>
         <td data-label="Plan">{{ row.customer.plan.name }}</td>
         <td data-label="Status"><span class="badge {{ row.customer.status.value }}">{{ row.customer.status.value }}</span></td>
         <td data-label="Online"><span class="badge {{ 'online' if row.online else 'offline' }}">{{ 'online' if row.online else 'offline' }}</span></td>

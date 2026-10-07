@@ -21,7 +21,7 @@
         </div>
         <div>
           <label>Phone (2547...)</label>
-          <input name="phone_number" value="{{ customer.phone_number }}" required>
+          <input name="phone_number" value="{{ customer.phone_number or '' }}" placeholder="2547XXXXXXXX">
         </div>
         <div>
           <label>Email (optional)</label>
