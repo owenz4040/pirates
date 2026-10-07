@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import html
 import json
 import secrets
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -53,48 +55,108 @@ def paybill_charge(username: str, db: Session = Depends(get_db)) -> dict[str, An
         raise HTTPException(502, str(exc)) from exc
 
 
-def _pay_page(heading: str, message: str, *, ok: bool) -> str:
+# One M-Pesa request per customer per this long, however often the link is used.
+PROMPT_COOLDOWN = timedelta(seconds=90)
+
+
+def _pay_page(heading: str, message: str, *, ok: bool, button: str | None = None) -> str:
     accent = "#c9a24b" if ok else "#e0554f"
-    return f"""\
-<!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pirates Wifi</title></head>
+    form = (
+        f'<form method="post" style="margin-top:22px;"><button type="submit" style="background:{accent};color:#050810;'
+        f'border:0;border-radius:8px;padding:12px 22px;font-size:15px;font-weight:600;cursor:pointer;">'
+        f"{html.escape(button)}</button></form>"
+        if button
+        else ""
+    )
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex"><title>Pirates Wifi</title></head>
 <body style="margin:0;background:#050810;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
   <div style="max-width:420px;margin:64px auto;padding:0 20px;">
     <div style="background:#0c1120;border:1px solid {accent};border-radius:12px;padding:36px 28px;text-align:center;">
       <div style="color:{accent};font-size:11px;font-weight:600;letter-spacing:0.2em;text-transform:uppercase;margin-bottom:14px;">Pirates Wifi</div>
-      <h1 style="margin:0 0 12px;color:#f5efe0;font-size:20px;">{heading}</h1>
-      <p style="margin:0;color:#9aa3b8;font-size:14px;line-height:1.6;">{message}</p>
+      <h1 style="margin:0 0 12px;color:#f5efe0;font-size:20px;">{html.escape(heading)}</h1>
+      <p style="margin:0;color:#9aa3b8;font-size:14px;line-height:1.6;">{html.escape(message)}</p>
+      {form}
     </div>
   </div>
 </body></html>
 """
 
 
-@router.get("/pay/{username}/{token}/mpesa")
-def public_mpesa_prompt(username: str, token: str, db: Session = Depends(get_db)) -> HTMLResponse:
-    """
-    Public, no-admin-auth landing page for the "Pay Now" button in the
-    welcome email. `token` is the customer's unguessable pay_token, so this
-    can only trigger a charge for the one customer that link was sent to -
-    without it, anyone could spam any username's phone with M-Pesa prompts.
-    """
+def _masked(phone: str | None) -> str:
+    return f"{phone[:5]}•••••{phone[-3:]}" if phone and len(phone) > 8 else "your phone"
+
+
+def _pay_customer(db: Session, username: str, token: str) -> Customer | None:
     customer = db.scalar(select(Customer).where(Customer.pppoe_username == username))
     if customer is None or not secrets.compare_digest(customer.pay_token, token):
-        return HTMLResponse(
-            _pay_page("Link not found", "This payment link is invalid.", ok=False), status_code=404
-        )
+        return None
+    return customer
 
+
+def _not_found() -> HTMLResponse:
+    return HTMLResponse(_pay_page("Link not found", "This payment link is invalid.", ok=False), status_code=404)
+
+
+@router.get("/pay/{username}/{token}/mpesa")
+def public_pay_page(username: str, token: str, db: Session = Depends(get_db)) -> HTMLResponse:
+    """
+    Landing page for the "Pay with M-Pesa" email link. Opening it changes
+    nothing - email security scanners open links automatically, so the M-Pesa
+    request is only sent when the customer presses the button (a POST).
+    """
+    customer = _pay_customer(db, username, token)
+    if customer is None:
+        return _not_found()
+    return HTMLResponse(
+        _pay_page(
+            f"Pay KES {int(customer.plan.price_kes)}",
+            f"Account {customer.pppoe_username}. We'll send an M-Pesa payment request to {_masked(customer.phone_number)} "
+            "for you to approve.",
+            ok=True,
+            button="Send M-Pesa request",
+        ),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/pay/{username}/{token}/mpesa")
+def public_mpesa_prompt(username: str, token: str, db: Session = Depends(get_db)) -> HTMLResponse:
+    """
+    Sends the STK push. `token` is the customer's unguessable pay_token, so
+    this only ever charges the customer the link was sent to, and the
+    cooldown stops the link being used to flood their phone with prompts.
+    """
+    customer = _pay_customer(db, username, token)
+    if customer is None:
+        return _not_found()
+    recent = db.scalar(
+        select(Payment).where(
+            Payment.customer_id == customer.id,
+            Payment.status == PaymentStatus.pending,
+            Payment.created_at > datetime.now(timezone.utc) - PROMPT_COOLDOWN,
+        )
+    )
+    if recent is not None:
+        return HTMLResponse(_pay_page(
+            "Request already sent",
+            f"Check {_masked(customer.phone_number)} for the M-Pesa request. If it didn't arrive, wait a minute and try again.",
+            ok=True,
+        ))
     try:
         services.request_mpesa_charge(db, customer)
     except PaystackError as exc:
-        return HTMLResponse(_pay_page("Couldn't send prompt", str(exc), ok=False), status_code=502)
-
+        print(f"Pay link M-Pesa request for {customer.pppoe_username} failed: {exc}")
+        return HTMLResponse(
+            _pay_page("Couldn't send the request", "Please try again in a few minutes, or contact us.", ok=False),
+            status_code=502,
+        )
     return HTMLResponse(
         _pay_page(
             "Check your phone",
-            f"An M-Pesa payment request has been sent to {customer.phone_number}. Approve it on your phone to complete "
-            "payment - your internet reconnects automatically within about a minute of confirmation.",
+            f"An M-Pesa payment request has been sent to {_masked(customer.phone_number)}. Approve it to complete "
+            "payment - your internet reconnects automatically within about a minute.",
             ok=True,
         )
     )

@@ -151,3 +151,14 @@ class RouterDevice(Base):
     secrets_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     secrets_reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class LoginAttempt(Base):
+    """Failed admin logins, for lockout. Kept in the DB because serverless instances share no memory."""
+
+    __tablename__ = "login_attempts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ip: Mapped[str] = mapped_column(String(45), index=True)
+    username: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

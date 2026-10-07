@@ -94,7 +94,9 @@
     <div class="emblem">&#10022;</div>
     <h1>Pirates Wifi</h1>
     <p class="tagline">Admin Access</p>
-    {% if error %}
+    {% if error == "locked" %}
+    <div class="error">Too many failed attempts. Try again in 15 minutes.</div>
+    {% elif error %}
     <div class="error">Invalid username or password.</div>
     {% endif %}
     <form method="post" action="/login">
