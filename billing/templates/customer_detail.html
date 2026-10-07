@@ -67,6 +67,11 @@
     <button type="submit" class="danger">Suspend</button>
   </form>
   {% endif %}
+  {% if customer.email %}
+  <form class="inline" method="post" action="/dashboard/customers/{{ customer.pppoe_username }}/welcome">
+    <button type="submit" class="secondary">Send welcome email</button>
+  </form>
+  {% endif %}
   <form class="inline" method="post" action="/dashboard/customers/{{ customer.pppoe_username }}/mpesa/charge">
     <button type="submit" class="secondary">Send M-Pesa prompt (KES {{ customer.plan.price_kes }})</button>
   </form>

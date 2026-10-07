@@ -70,7 +70,7 @@ def create_customer(
     welcome_email_error = None
     if customer.email:
         try:
-            paybill_info = services.request_paybill_charge(db, customer)
+            paybill_info, _ = services.try_paybill_charge(db, customer)
             subject, html, text = services.compose_welcome_email(customer, paybill_info)
             email_client.send_email(customer.email, subject, html, text)
             welcome_email_sent = True

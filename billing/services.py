@@ -298,7 +298,23 @@ def _pay_link(customer: Customer) -> str | None:
     return f"{settings.public_base_url.rstrip('/')}/pay/{customer.pppoe_username}/{customer.pay_token}/mpesa"
 
 
-def _payment_details(paybill_info: dict[str, Any]) -> list[tuple[str, str]]:
+def try_paybill_charge(db: Session, customer: Customer) -> tuple[dict[str, Any] | None, str | None]:
+    """
+    request_paybill_charge for emails: a Paystack failure (bad key, outage)
+    must not stop the email going out, so return (None, reason) instead of
+    raising. The email then shows the amount and the pay link without a code.
+    """
+    try:
+        return request_paybill_charge(db, customer), None
+    except Exception as exc:  # noqa: BLE001 - any Paystack failure degrades the email, never blocks it
+        db.rollback()
+        print(f"Paybill code for {customer.pppoe_username} failed: {exc}")
+        return None, str(exc)
+
+
+def _payment_details(customer: Customer, paybill_info: dict[str, Any] | None) -> list[tuple[str, str]]:
+    if paybill_info is None:
+        return [("Amount", f"KES {int(customer.plan.price_kes)}")]
     return [
         ("Amount", f"KES {paybill_info['amount_kes']}"),
         ("M-Pesa Paybill", str(paybill_info["paybill"])),
@@ -316,7 +332,7 @@ def _pay_button(customer: Customer, label: str) -> dict[str, Any]:
     }
 
 
-def compose_welcome_email(customer: Customer, paybill_info: dict[str, Any]) -> tuple[str, str, str]:
+def compose_welcome_email(customer: Customer, paybill_info: dict[str, Any] | None) -> tuple[str, str, str]:
     """Returns (subject, html, text) for the new-account email."""
     return render_email(
         Email(
@@ -326,7 +342,7 @@ def compose_welcome_email(customer: Customer, paybill_info: dict[str, Any]) -> t
                 f"Your {_plan_speed_label(customer.plan)} internet account ({customer.pppoe_username}) has been set up. "
                 "It will be activated as soon as your first payment is received."
             ),
-            details=_payment_details(paybill_info),
+            details=_payment_details(customer, paybill_info),
             **_pay_button(customer, "Pay with M-Pesa"),
             outro="Your connection switches on automatically once payment is confirmed, usually within a minute.",
             account=customer.pppoe_username,
@@ -660,7 +676,7 @@ def expire_overdue_customers(
     return overdue
 
 
-def compose_reminder_email(customer: Customer, paybill_info: dict[str, Any], days_left: int) -> tuple[str, str, str]:
+def compose_reminder_email(customer: Customer, paybill_info: dict[str, Any] | None, days_left: int) -> tuple[str, str, str]:
     """Returns (subject, html, text) for the upcoming-expiry reminder."""
     when = "tomorrow" if days_left == 1 else f"in {days_left} days"
     expires = _fmt_eat(customer.expires_at) if customer.expires_at else ""
@@ -670,7 +686,7 @@ def compose_reminder_email(customer: Customer, paybill_info: dict[str, Any], day
             greeting_name=customer.full_name,
             intro=f"Your internet subscription ends {when}{' (' + expires + ')' if expires else ''}. "
             "To stay connected without interruption, renew before then.",
-            details=_payment_details(paybill_info),
+            details=_payment_details(customer, paybill_info),
             **_pay_button(customer, "Renew with M-Pesa"),
             account=customer.pppoe_username,
         )
@@ -701,12 +717,12 @@ def send_expiry_reminders(db: Session) -> tuple[int, int]:
     count_2 = 0
     for customer in customers_2_days:
         if customer.email:
+            paybill_info, _ = try_paybill_charge(db, customer)
             try:
-                paybill_info = request_paybill_charge(db, customer)
                 subject, html, text = compose_reminder_email(customer, paybill_info, 2)
                 email_client.send_email(customer.email, subject, html, text)
-            except Exception:
-                pass # best effort
+            except Exception as exc:  # noqa: BLE001 - best effort, never blocks the sweep
+                print(f"Reminder email to {customer.pppoe_username} failed: {exc}")
         customer.reminder_2_days_sent = True
         db.add(customer)
         count_2 += 1
@@ -726,12 +742,12 @@ def send_expiry_reminders(db: Session) -> tuple[int, int]:
     count_1 = 0
     for customer in customers_1_day:
         if customer.email:
+            paybill_info, _ = try_paybill_charge(db, customer)
             try:
-                paybill_info = request_paybill_charge(db, customer)
                 subject, html, text = compose_reminder_email(customer, paybill_info, 1)
                 email_client.send_email(customer.email, subject, html, text)
-            except Exception:
-                pass # best effort
+            except Exception as exc:  # noqa: BLE001 - best effort, never blocks the sweep
+                print(f"Reminder email to {customer.pppoe_username} failed: {exc}")
         customer.reminder_1_day_sent = True
         db.add(customer)
         count_1 += 1
