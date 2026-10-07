@@ -266,3 +266,20 @@ def test_cron_requires_secret(client, monkeypatch):
     resp = client.get("/api/cron/daily", headers={"Authorization": "Bearer s3cret"})
     assert resp.status_code == 200
     assert resp.json()["expired"] == []
+
+
+def test_setup_script_hidden_once_router_is_online(client, db, monkeypatch):
+    from billing.config import settings
+
+    monkeypatch.setattr(settings, "admin_password", "pw")
+    client.post("/login", data={"username": settings.admin_username, "password": "pw"})
+    device = router_sync.get_or_create_device(db)
+
+    assert device.token in client.get("/dashboard/router").text  # not connected yet: shown
+
+    client.post("/api/router/sync", headers={"X-Pirates-Token": device.token}, content="active=")
+    page = client.get("/dashboard/router").text
+    assert device.token not in page  # connected: not even in the page source
+    assert "Show setup script" in page
+
+    assert device.token in client.get("/dashboard/router?setup=1").text  # on request
