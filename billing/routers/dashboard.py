@@ -604,8 +604,12 @@ def update_plan(
 
 
 @router.get("/router")
-def router_page(request: Request, db: Session = Depends(get_db)):
+def router_page(request: Request, setup: bool = False, db: Session = Depends(get_db)):
     device = router_sync.get_or_create_device(db)
+    online = router_sync.is_online(device)
+    # Once connected, the script (which carries the router's secret token) isn't
+    # rendered at all unless asked for, e.g. to reinstall or replace the router.
+    show_setup = setup or not online
     base_url = settings.public_base_url or str(request.base_url)
     commands = db.scalars(select(RouterCommand).order_by(RouterCommand.id.desc()).limit(50)).all()
     counts = {
@@ -617,8 +621,9 @@ def router_page(request: Request, db: Session = Depends(get_db)):
         "router.html",
         {
             "device": device,
-            "online": router_sync.is_online(device),
-            "setup_script": router_sync.setup_script(base_url, device.token),
+            "online": online,
+            "show_setup": show_setup,
+            "setup_script": router_sync.setup_script(base_url, device.token) if show_setup else "",
             "commands": commands,
             "counts": counts,
             **_flash_context(request),

@@ -40,8 +40,9 @@
 </div>
 {% endif %}
 
+{% if show_setup %}
 <div class="panel">
-  <span class="panel-title">Connect your MikroTik</span>
+  <span class="panel-title">{% if online %}Router setup script{% else %}Connect your MikroTik{% endif %}</span>
   <p class="muted" style="margin-top:0">
     Open Winbox, choose <strong>New Terminal</strong>, and paste everything below. It installs a script that
     checks in with this app every minute, applies queued changes (new customers, suspensions, reconnections,
@@ -54,9 +55,16 @@
     <form method="post" action="/dashboard/router/token" onsubmit="return confirm('The router stops syncing until you paste the new script. Continue?')">
       <button type="submit" class="secondary">Generate new token</button>
     </form>
+    {% if online %}<a href="/dashboard/router"><button type="button" class="secondary">Hide</button></a>{% endif %}
   </div>
   <p class="muted">The script contains this router's secret token. Don't share it.</p>
 </div>
+{% else %}
+<div class="panel" style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+  <div class="muted">Router connected and syncing. The setup script is hidden; you only need it to reinstall or replace the router.</div>
+  <a href="/dashboard/router?setup=1"><button type="button" class="secondary">Show setup script</button></a>
+</div>
+{% endif %}
 
 <div class="panel">
   <span class="panel-title">Maintenance</span>
@@ -99,7 +107,7 @@
 </div>
 
 <script>
-  document.getElementById("copy-script").addEventListener("click", async (event) => {
+  document.getElementById("copy-script")?.addEventListener("click", async (event) => {
     await navigator.clipboard.writeText(document.getElementById("setup-script").textContent);
     event.target.textContent = "Copied";
     setTimeout(() => (event.target.textContent = "Copy script"), 2000);
