@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Router - Pirates Billing{% endblock %}
+{% block content %}
+<h1>Router</h1>
+
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-label">Status</div>
+    <div class="stat-value">
+      {% if online %}<span class="badge online">Online</span>
+      {% elif device.last_seen_at %}<span class="badge failed">Not syncing</span>
+      {% else %}<span class="badge offline">Not set up</span>{% endif %}
+    </div>
+    <div class="muted" style="margin-top:8px">
+      {% if device.last_seen_at %}Last sync {{ device.last_seen_at.strftime("%d %b %H:%M:%S UTC") }}{% else %}Never synced{% endif %}
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Online PPPoE users</div>
+    <div class="stat-value">{{ (device.active_usernames or [])|length if online else "-" }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Waiting for router</div>
+    <div class="stat-value">{{ counts.pending + counts.sent }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Failed commands</div>
+    <div class="stat-value">{{ counts.failed }}</div>
+  </div>
+</div>
+
+{% if device.last_seen_at %}
+<div class="panel">
+  <span class="panel-title">Device</span>
+  <p class="muted" style="margin:0">
+    {{ device.board or "Unknown board" }} &middot; RouterOS {{ device.version or "?" }} &middot;
+    uptime {{ device.uptime or "?" }} &middot; CPU {{ device.cpu_load if device.cpu_load is not none else "?" }}%
+    {% if device.last_ip %}&middot; from {{ device.last_ip }}{% endif %}
+  </p>
+</div>
+{% endif %}
+
+<div class="panel">
+  <span class="panel-title">Connect your MikroTik</span>
+  <p class="muted" style="margin-top:0">
+    Open Winbox, choose <strong>New Terminal</strong>, and paste everything below. It installs a script that
+    checks in with this app every minute, applies queued changes (new customers, suspensions, reconnections,
+    plan changes), and reports which users are online. The router only makes outgoing HTTPS requests, so no
+    port forwarding, VPN, or public IP is needed. Pasting it again is safe.
+  </p>
+  <pre id="setup-script" style="white-space:pre-wrap;word-break:break-all;background:rgba(0,0,0,0.35);border:1px solid var(--border);border-radius:10px;padding:16px;font-size:0.8rem;max-height:320px;overflow:auto">{{ setup_script }}</pre>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <button type="button" id="copy-script">Copy script</button>
+    <form method="post" action="/dashboard/router/token" onsubmit="return confirm('The router stops syncing until you paste the new script. Continue?')">
+      <button type="submit" class="secondary">Generate new token</button>
+    </form>
+  </div>
+  <p class="muted">The script contains this router's secret token. Don't share it.</p>
+</div>
+
+<div class="panel">
+  <span class="panel-title">Maintenance</span>
+  <p class="muted" style="margin-top:0">
+    <strong>Resync</strong> re-sends every plan profile and every customer's on/off state, which fixes things
+    changed by hand in Winbox or lost in a router reset. Missing PPPoE accounts can't be recreated this way
+    because passwords aren't stored here.
+  </p>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <form method="post" action="/dashboard/router/resync"><button type="submit">Resync everything</button></form>
+    {% if counts.failed %}
+    <form method="post" action="/dashboard/router/retry"><button type="submit" class="secondary">Retry {{ counts.failed }} failed</button></form>
+    {% endif %}
+  </div>
+</div>
+
+<h2>Recent commands</h2>
+<div class="table-wrapper">
+  <table>
+    <thead>
+      <tr><th>#</th><th>Action</th><th>Status</th><th>Queued</th><th>Tries</th></tr>
+    </thead>
+    <tbody>
+      {% for cmd in commands %}
+      <tr>
+        <td data-label="#">{{ cmd.id }}</td>
+        <td data-label="Action">{{ cmd.description }}</td>
+        <td data-label="Status">
+          <span class="badge {{ {'done': 'active', 'failed': 'failed', 'sent': 'online', 'pending': 'pending'}[cmd.status.value] }}">{{ cmd.status.value }}</span>
+        </td>
+        <td data-label="Queued">{{ cmd.created_at.strftime("%d %b %H:%M") if cmd.created_at else "" }}</td>
+        <td data-label="Tries">{{ cmd.attempts }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">Nothing queued yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+  document.getElementById("copy-script").addEventListener("click", async (event) => {
+    await navigator.clipboard.writeText(document.getElementById("setup-script").textContent);
+    event.target.textContent = "Copied";
+    setTimeout(() => (event.target.textContent = "Copy script"), 2000);
+  });
+</script>
+{% endblock %}

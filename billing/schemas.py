@@ -5,7 +5,9 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from billing.models import CustomerStatus, PaymentStatus
+import ipaddress
+
+from billing.models import ConnectionType, CustomerStatus, PaymentStatus
 
 
 def _normalize_kenyan_phone(value: str) -> str:
@@ -22,6 +24,27 @@ def _normalize_kenyan_phone(value: str) -> str:
     if digits.startswith("0"):
         return f"+254{digits[1:]}"
     raise ValueError(f"Expected a Kenyan number (07.../2547.../+2547...), got {value!r}")
+
+
+def _validate_ip(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    if "/" in cleaned:
+        try:
+            net = ipaddress.IPv4Network(cleaned, strict=False)
+            if net.prefixlen == 32:
+                return str(net.network_address)
+            return str(net)
+        except ValueError:
+            raise ValueError(f"Invalid IPv4 network or CIDR: {value!r}") from None
+    try:
+        ip = ipaddress.IPv4Address(cleaned)
+        return str(ip)
+    except ValueError:
+        raise ValueError(f"Invalid IPv4 address: {value!r}") from None
 
 
 class PlanCreate(BaseModel):
@@ -49,13 +72,16 @@ class PlanOut(BaseModel):
 
 class CustomerCreate(BaseModel):
     pppoe_username: str
-    pppoe_password: str
+    pppoe_password: str = ""
     full_name: str
     phone_number: str
     email: str | None = None
     plan_id: int
+    connection_type: ConnectionType = ConnectionType.pppoe
+    static_ip: str | None = None
 
     _normalize_phone = field_validator("phone_number")(_normalize_kenyan_phone)
+    _check_static_ip = field_validator("static_ip")(_validate_ip)
 
 
 class CustomerOut(BaseModel):
@@ -66,9 +92,11 @@ class CustomerOut(BaseModel):
     full_name: str
     phone_number: str
     email: str | None
+    connection_type: ConnectionType
+    static_ip: str | None
     plan_id: int
     status: CustomerStatus
-    expires_at: datetime
+    expires_at: datetime | None
 
 
 class CustomerStatusOut(CustomerOut):
@@ -88,10 +116,12 @@ class CustomerUpdate(BaseModel):
     full_name: str | None = None
     phone_number: str | None = None
     email: str | None = None
+    static_ip: str | None = None
 
     _normalize_phone = field_validator("phone_number")(
         lambda v: _normalize_kenyan_phone(v) if v is not None else v
     )
+    _check_static_ip = field_validator("static_ip")(_validate_ip)
 
 
 class PaymentCreate(BaseModel):

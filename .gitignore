@@ -6,3 +6,8 @@ __pycache__/
 scratch_*
 .vscode/
 =2.2
+uvicorn.*.log
+
+.vercel
+.env*
+!.env.example

@@ -239,6 +239,7 @@
     <a href="/dashboard" class="{% if request.url.path == '/dashboard' %}active{% endif %}">Dashboard</a>
     <a href="/dashboard/customers/new" class="{% if request.url.path == '/dashboard/customers/new' %}active{% endif %}">Add Customer</a>
     <a href="/dashboard/plans" class="{% if request.url.path == '/dashboard/plans' %}active{% endif %}">Plans</a>
+    <a href="/dashboard/router" class="{% if request.url.path == '/dashboard/router' %}active{% endif %}">Router</a>
   </nav>
   <form class="logout-form" method="post" action="/logout">
     <button type="submit">Sign out</button>

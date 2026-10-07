@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from librouteros.api import Api
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from billing import services
+from billing.auth import require_admin
 from billing.db import get_db
-from billing.mikrotik_dep import get_router_api
+from billing.router_sync import RouterGateway, get_router
 from billing.models import Plan
 from billing.schemas import PlanCreate, PlanOut, PlanUpdate
-from mikrotik.bandwidth import BandwidthProfileManager
 
-router = APIRouter(prefix="/plans", tags=["plans"])
+router = APIRouter(prefix="/plans", tags=["plans"], dependencies=[Depends(require_admin)])
 
 
 @router.get("", response_model=list[PlanOut])
@@ -36,13 +35,13 @@ def update_plan(
     plan_id: int,
     payload: PlanUpdate,
     db: Session = Depends(get_db),
-    api: Api = Depends(get_router_api),
+    gw: RouterGateway = Depends(get_router),
 ) -> Plan:
     """Edit a plan's price/speed/duration. Changing rate_limit also updates the RouterOS PPP profile."""
     plan = db.get(Plan, plan_id)
     if plan is None:
         raise HTTPException(404, f"No plan with id {plan_id}")
-    bw = BandwidthProfileManager(api)
+    bw = gw.bw
     return services.update_plan(
         db,
         bw,

@@ -6,26 +6,45 @@
 <div class="panel">
   <span class="panel-title">New Customer Details</span>
   <form method="post" action="/dashboard/customers">
+    <div style="margin-bottom: 24px;">
+      <label style="display: block; margin-bottom: 8px; font-weight: 600; color: var(--text);">Connection Type</label>
+      <div style="display: flex; gap: 20px; align-items: center;">
+        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text); font-weight: 500;">
+          <input type="radio" name="connection_type" value="pppoe" id="conn_pppoe" checked onchange="toggleConnectionType()">
+          <span>PPPoE Account</span>
+        </label>
+        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text); font-weight: 500;">
+          <input type="radio" name="connection_type" value="static" id="conn_static" onchange="toggleConnectionType()">
+          <span>Static IP (Simple Queue)</span>
+        </label>
+      </div>
+    </div>
+
     <div class="field-row">
       <div>
-        <label>PPPoE username</label>
-        <input name="pppoe_username" required>
+        <label id="username_label">Account / PPPoE Username</label>
+        <input name="pppoe_username" placeholder="e.g. Pirate01" required>
+      </div>
+      <div id="password_field">
+        <label>PPPoE Password</label>
+        <input name="pppoe_password" id="password_input" required>
+      </div>
+      <div id="static_ip_field" style="display: none;">
+        <label>Static IP or Subnet Pool</label>
+        <input name="static_ip" id="static_ip_input" placeholder="e.g. 192.168.88.51 (Single) or 192.168.88.48/29 (Repeater Pool)">
+        <small style="display:block; margin-top:4px; color:var(--muted); font-size:12px;">For bridged routers (like HG8546M with DHCP off), entering a subnet (e.g. 192.168.88.48/29) creates a shared pool where all household devices get automatic DHCP and share the plan speed.</small>
       </div>
       <div>
-        <label>PPPoE password</label>
-        <input name="pppoe_password" required>
-      </div>
-      <div>
-        <label>Full name</label>
-        <input name="full_name" required>
+        <label>Full Name</label>
+        <input name="full_name" placeholder="Subscriber name" required>
       </div>
       <div>
         <label>Phone (2547...)</label>
-        <input name="phone_number" required>
+        <input name="phone_number" placeholder="2547XXXXXXXX" required>
       </div>
       <div>
         <label>Email (optional)</label>
-        <input name="email" type="email">
+        <input name="email" type="email" placeholder="subscriber@example.com">
       </div>
       <div>
         <label>Plan</label>
@@ -47,4 +66,29 @@
     <button type="submit">Create customer</button>
   </form>
 </div>
+
+<script>
+function toggleConnectionType() {
+  const isStatic = document.getElementById('conn_static').checked;
+  const pwField = document.getElementById('password_field');
+  const pwInput = document.getElementById('password_input');
+  const ipField = document.getElementById('static_ip_field');
+  const ipInput = document.getElementById('static_ip_input');
+  const usernameLabel = document.getElementById('username_label');
+
+  if (isStatic) {
+    pwField.style.display = 'none';
+    pwInput.removeAttribute('required');
+    ipField.style.display = 'block';
+    ipInput.setAttribute('required', 'required');
+    usernameLabel.textContent = 'Account Name / ID';
+  } else {
+    pwField.style.display = 'block';
+    pwInput.setAttribute('required', 'required');
+    ipField.style.display = 'none';
+    ipInput.removeAttribute('required');
+    usernameLabel.textContent = 'Account / PPPoE Username';
+  }
+}
+</script>
 {% endblock %}

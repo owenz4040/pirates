@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 import uuid
 from decimal import Decimal
 from pathlib import Path
@@ -10,22 +11,20 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
-from librouteros.api import Api
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from billing import services
+from billing import router_sync, services
 from billing.auth import require_admin
 from billing.db import get_db
 from billing.email import client as email_client
-from billing.mikrotik_dep import get_router_api
-from billing.models import Customer, Plan
+from billing.router_sync import RouterGateway, get_router
+from billing.config import settings
+from billing.models import ConnectionType, Customer, Plan, RouterCommand, RouterCommandStatus
 from billing.mpesa import paystack
 from billing.mpesa.paystack import PaystackError
-from billing.schemas import _normalize_kenyan_phone
-from mikrotik.bandwidth import BandwidthProfileManager
-from mikrotik.pppoe import PPPoEManager
+from billing.schemas import _normalize_kenyan_phone, _validate_ip
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"], dependencies=[Depends(require_admin)])
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
@@ -55,27 +54,42 @@ def customers_page(
     request: Request,
     filter: str = "all",
     db: Session = Depends(get_db),
-    api: Api | None = Depends(get_router_api),
 ):
-    ppp = PPPoEManager(api) if api else None
+    # Sessions the router reported on its last sync (empty if it's gone quiet).
+    active_usernames = router_sync.active_usernames(db)
+
     customers = db.scalars(select(Customer)).all()
-    rows = [{"customer": c, "online": ppp.is_online(c.pppoe_username) if ppp else False} for c in customers]
+
+    rows = []
+    for c in customers:
+        conn_val = getattr(c.connection_type, "value", str(c.connection_type))
+        if conn_val == "static":
+            # Static users have no session to report - treat "not suspended" as online.
+            online = bool(c.static_ip) and getattr(c.status, "value", str(c.status)) == "active"
+        else:
+            u_clean = c.pppoe_username.strip().lower() if c.pppoe_username else ""
+            online = u_clean in active_usernames
+        rows.append({"customer": c, "online": online})
     
     stats = {
         "total": len(customers),
-        "active": sum(1 for c in customers if c.status.value == "active"),
-        "suspended": sum(1 for c in customers if c.status.value in ("suspended", "expired")),
+        "active": sum(1 for c in customers if getattr(c.status, "value", str(c.status)) == "active"),
+        "suspended": sum(1 for c in customers if getattr(c.status, "value", str(c.status)) in ("suspended", "expired")),
         "online": sum(1 for row in rows if row["online"]),
     }
     
     if filter == "active":
-        rows = [r for r in rows if r["customer"].status.value == "active"]
+        rows = [r for r in rows if getattr(r["customer"].status, "value", str(r["customer"].status)) == "active"]
     elif filter == "expired":
-        rows = [r for r in rows if r["customer"].status.value == "expired"]
+        rows = [r for r in rows if getattr(r["customer"].status, "value", str(r["customer"].status)) == "expired"]
     elif filter == "online":
         rows = [r for r in rows if r["online"]]
     elif filter == "offline":
         rows = [r for r in rows if not r["online"]]
+    elif filter == "pppoe":
+        rows = [r for r in rows if getattr(r["customer"].connection_type, "value", str(r["customer"].connection_type)) == "pppoe"]
+    elif filter == "static":
+        rows = [r for r in rows if getattr(r["customer"].connection_type, "value", str(r["customer"].connection_type)) == "static"]
 
     plans = db.scalars(select(Plan)).all()
     return templates.TemplateResponse(
@@ -101,28 +115,42 @@ def new_customer_page(
 @router.post("/customers")
 def create_customer(
     pppoe_username: str = Form(...),
-    pppoe_password: str = Form(...),
+    pppoe_password: str = Form(""),
     full_name: str = Form(...),
     phone_number: str = Form(...),
     email: str = Form(""),
     plan_id: int = Form(...),
+    connection_type: str = Form("pppoe"),
+    static_ip: str = Form(""),
     no_expiry: bool = Form(False),
     db: Session = Depends(get_db),
-    api: Api | None = Depends(get_router_api),
+    gw: RouterGateway = Depends(get_router),
 ):
     plan = db.get(Plan, plan_id)
     if plan is None:
         return _redirect("/dashboard/customers/new", flash=f"No plan with id {plan_id}", flash_kind="error")
     if _get_customer_or_none(db, pppoe_username) is not None:
         return _redirect("/dashboard/customers/new", flash=f"{pppoe_username} already exists", flash_kind="error")
-    if not api:
-        return _redirect("/dashboard/customers/new", flash="Router is offline - cannot create customer", flash_kind="error")
     try:
         phone_number = _normalize_kenyan_phone(phone_number)
     except ValueError as exc:
         return _redirect("/dashboard/customers/new", flash=str(exc), flash_kind="error")
 
-    ppp = PPPoEManager(api)
+    conn_type = ConnectionType.static if connection_type == "static" else ConnectionType.pppoe
+    clean_static_ip = None
+    if conn_type == ConnectionType.static:
+        if not static_ip:
+            return _redirect("/dashboard/customers/new", flash="Static IP is required for static users", flash_kind="error")
+        try:
+            clean_static_ip = _validate_ip(static_ip)
+        except ValueError as exc:
+            return _redirect("/dashboard/customers/new", flash=str(exc), flash_kind="error")
+    else:
+        if not pppoe_password:
+            return _redirect("/dashboard/customers/new", flash="Password is required for PPPoE users", flash_kind="error")
+
+    ppp = gw.ppp
+    static_mgr = gw.static
     customer = services.create_customer(
         db,
         ppp,
@@ -132,7 +160,10 @@ def create_customer(
         phone_number=phone_number,
         email=email or None,
         plan=plan,
+        connection_type=conn_type,
+        static_ip=clean_static_ip,
         no_expiry=no_expiry,
+        static_mgr=static_mgr,
     )
 
     if not customer.email:
@@ -152,12 +183,15 @@ def customer_page(
     username: str,
     request: Request,
     db: Session = Depends(get_db),
-    api: Api | None = Depends(get_router_api),
 ):
     customer = _get_customer_or_none(db, username)
     if customer is None:
         return _redirect("/dashboard", flash=f"No customer {username!r}", flash_kind="error")
-    ppp = PPPoEManager(api) if api else None
+    if customer.connection_type.value == "static":
+        online = bool(customer.static_ip) and customer.status.value == "active"
+    else:
+        online = username.strip().lower() in router_sync.active_usernames(db)
+
     plans = db.scalars(select(Plan)).all()
     payments = sorted(customer.payments, key=lambda p: p.created_at, reverse=True)
     return templates.TemplateResponse(
@@ -165,7 +199,7 @@ def customer_page(
         "customer_detail.html",
         {
             "customer": customer,
-            "online": ppp.is_online(username) if ppp else False,
+            "online": online,
             "plans": plans,
             "payments": payments,
             **_flash_context(request),
@@ -174,30 +208,28 @@ def customer_page(
 
 
 @router.post("/customers/{username}/suspend")
-def suspend(username: str, db: Session = Depends(get_db), api: Api | None = Depends(get_router_api)):
+def suspend(username: str, db: Session = Depends(get_db), gw: RouterGateway = Depends(get_router)):
     customer = _get_customer_or_none(db, username)
     if customer is None:
         return _redirect("/dashboard", flash=f"No customer {username!r}", flash_kind="error")
-    if not api:
-        return _redirect(f"/dashboard/customers/{username}", flash="Router is offline", flash_kind="error")
-    ppp = PPPoEManager(api)
-    services.suspend_customer(db, ppp, customer)
+    ppp = gw.ppp
+    static_mgr = gw.static
+    services.suspend_customer(db, ppp, customer, static_mgr=static_mgr)
     return _redirect(f"/dashboard/customers/{username}", flash=f"Suspended {username}")
 
 
 @router.post("/customers/{username}/delete")
-def delete_customer(username: str, db: Session = Depends(get_db), api: Api | None = Depends(get_router_api)):
+def delete_customer(username: str, db: Session = Depends(get_db), gw: RouterGateway = Depends(get_router)):
     customer = _get_customer_or_none(db, username)
     if customer is None:
         return _redirect("/dashboard", flash=f"No customer {username!r}", flash_kind="error")
-    if not api:
-        return _redirect(f"/dashboard/customers/{username}", flash="Router is offline", flash_kind="error")
-    ppp = PPPoEManager(api)
+    ppp = gw.ppp
+    static_mgr = gw.static
     try:
-        services.delete_customer(db, ppp, customer)
+        services.delete_customer(db, ppp, customer, static_mgr=static_mgr)
     except Exception as exc:  # noqa: BLE001 - surface router errors (e.g. unreachable) to the admin
         return _redirect(f"/dashboard/customers/{username}", flash=f"Couldn't delete {username}: {exc}", flash_kind="error")
-    return _redirect("/dashboard", flash=f"Deleted {username} and its PPPoE account")
+    return _redirect("/dashboard", flash=f"Deleted {username}")
 
 
 @router.post("/customers/{username}/details")
@@ -206,7 +238,9 @@ def update_details(
     full_name: str = Form(...),
     phone_number: str = Form(...),
     email: str = Form(""),
+    static_ip: str = Form(""),
     db: Session = Depends(get_db),
+    gw: RouterGateway = Depends(get_router),
 ):
     customer = _get_customer_or_none(db, username)
     if customer is None:
@@ -215,9 +249,24 @@ def update_details(
         phone_number = _normalize_kenyan_phone(phone_number)
     except ValueError as exc:
         return _redirect(f"/dashboard/customers/{username}", flash=str(exc), flash_kind="error")
+
+    clean_static_ip = None
+    if customer.connection_type.value == "static" and static_ip:
+        try:
+            clean_static_ip = _validate_ip(static_ip)
+        except ValueError as exc:
+            return _redirect(f"/dashboard/customers/{username}", flash=str(exc), flash_kind="error")
+
+    static_mgr = gw.static
     try:
         services.update_customer_details(
-            db, customer, full_name=full_name, phone_number=phone_number, email=email or None
+            db,
+            customer,
+            full_name=full_name,
+            phone_number=phone_number,
+            email=email or None,
+            static_ip=clean_static_ip,
+            static_mgr=static_mgr,
         )
     except IntegrityError:
         db.rollback()
@@ -234,16 +283,15 @@ def change_plan(
     username: str,
     plan_id: int = Form(...),
     db: Session = Depends(get_db),
-    api: Api | None = Depends(get_router_api),
+    gw: RouterGateway = Depends(get_router),
 ):
     customer = _get_customer_or_none(db, username)
     new_plan = db.get(Plan, plan_id)
     if customer is None or new_plan is None:
         return _redirect("/dashboard", flash="Customer or plan not found", flash_kind="error")
-    if not api:
-        return _redirect(f"/dashboard/customers/{username}", flash="Router is offline", flash_kind="error")
-    ppp = PPPoEManager(api)
-    services.change_plan(db, ppp, customer, new_plan)
+    ppp = gw.ppp
+    static_mgr = gw.static
+    services.change_plan(db, ppp, customer, new_plan, static_mgr=static_mgr)
     return _redirect(f"/dashboard/customers/{username}", flash=f"Moved {username} to {new_plan.name}")
 
 
@@ -253,14 +301,13 @@ def record_payment(
     amount_kes: Decimal = Form(...),
     mpesa_receipt: str = Form(""),
     db: Session = Depends(get_db),
-    api: Api | None = Depends(get_router_api),
+    gw: RouterGateway = Depends(get_router),
 ):
     customer = _get_customer_or_none(db, username)
     if customer is None:
         return _redirect("/dashboard", flash=f"No customer {username!r}", flash_kind="error")
-    if not api:
-        return _redirect(f"/dashboard/customers/{username}", flash="Router is offline", flash_kind="error")
-    ppp = PPPoEManager(api)
+    ppp = gw.ppp
+    static_mgr = gw.static
     payment = services.record_payment(
         db,
         ppp,
@@ -268,6 +315,7 @@ def record_payment(
         amount_kes=amount_kes,
         mpesa_receipt=mpesa_receipt or None,
         phone_number=None,
+        static_mgr=static_mgr,
     )
     if customer.email:
         try:
@@ -335,13 +383,11 @@ def create_plan(
     duration_days: int = Form(30),
     marketing_speed: str = Form(""),
     db: Session = Depends(get_db),
-    api: Api | None = Depends(get_router_api),
+    gw: RouterGateway = Depends(get_router),
 ):
     if db.scalar(select(Plan).where(Plan.name == name)):
         return _redirect("/dashboard/plans", flash=f"Plan {name!r} already exists", flash_kind="error")
-    if not api:
-        return _redirect("/dashboard/plans", flash="Router is offline - cannot create plan", flash_kind="error")
-    bw = BandwidthProfileManager(api)
+    bw = gw.bw
     try:
         services.create_plan(
             db,
@@ -368,17 +414,15 @@ def update_plan(
     duration_days: int = Form(...),
     marketing_speed: str = Form(""),
     db: Session = Depends(get_db),
-    api: Api | None = Depends(get_router_api),
+    gw: RouterGateway = Depends(get_router),
 ):
     plan = db.get(Plan, plan_id)
     if plan is None:
         return _redirect("/dashboard/plans", flash=f"No plan with id {plan_id}", flash_kind="error")
     if name != plan.name and db.scalar(select(Plan).where(Plan.name == name)):
         return _redirect("/dashboard/plans", flash=f"Plan {name!r} already exists", flash_kind="error")
-    if not api:
-        return _redirect("/dashboard/plans", flash="Router is offline - cannot update plan", flash_kind="error")
     old_name = plan.name
-    bw = BandwidthProfileManager(api)
+    bw = gw.bw
     try:
         services.update_plan(
             db,
@@ -394,3 +438,50 @@ def update_plan(
         return _redirect("/dashboard/plans", flash=f"Couldn't update plan: {exc}", flash_kind="error")
     flash = f"Updated {old_name}" if name == old_name else f"Renamed {old_name} to {name} and updated it"
     return _redirect("/dashboard/plans", flash=flash)
+
+
+@router.get("/router")
+def router_page(request: Request, db: Session = Depends(get_db)):
+    device = router_sync.get_or_create_device(db)
+    base_url = settings.public_base_url or str(request.base_url)
+    commands = db.scalars(select(RouterCommand).order_by(RouterCommand.id.desc()).limit(50)).all()
+    counts = {
+        status.value: db.scalar(select(func.count()).select_from(RouterCommand).where(RouterCommand.status == status))
+        for status in RouterCommandStatus
+    }
+    return templates.TemplateResponse(
+        request,
+        "router.html",
+        {
+            "device": device,
+            "online": router_sync.is_online(device),
+            "setup_script": router_sync.setup_script(base_url, device.token),
+            "commands": commands,
+            "counts": counts,
+            **_flash_context(request),
+        },
+    )
+
+
+@router.post("/router/resync")
+def router_resync(db: Session = Depends(get_db)):
+    queued = router_sync.enqueue_full_resync(db)
+    return _redirect("/dashboard/router", flash=f"Queued {queued} commands to bring the router in line with billing")
+
+
+@router.post("/router/retry")
+def router_retry(db: Session = Depends(get_db)):
+    retried = router_sync.retry_failed(db)
+    return _redirect("/dashboard/router", flash=f"Re-queued {retried} failed commands")
+
+
+@router.post("/router/token")
+def router_rotate_token(db: Session = Depends(get_db)):
+    device = router_sync.get_or_create_device(db)
+    device.token = secrets.token_hex(24)
+    db.add(device)
+    db.commit()
+    return _redirect(
+        "/dashboard/router",
+        flash="New token generated - paste the updated setup script into the router, the old one no longer works",
+    )

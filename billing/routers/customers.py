@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from librouteros.api import Api
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from billing import services
+from billing import router_sync, services
+from billing.auth import require_admin
 from billing.db import get_db
-from billing.mikrotik_dep import get_router_api
+from billing.router_sync import RouterGateway, get_router
 from billing.models import Customer, Plan
 from billing.email import client as email_client
 from billing.schemas import (
@@ -19,9 +19,8 @@ from billing.schemas import (
     CustomerStatusOut,
     CustomerUpdate,
 )
-from mikrotik.pppoe import PPPoEManager
 
-router = APIRouter(prefix="/customers", tags=["customers"])
+router = APIRouter(prefix="/customers", tags=["customers"], dependencies=[Depends(require_admin)])
 
 
 def _get_customer(db: Session, username: str) -> Customer:
@@ -40,15 +39,16 @@ def list_customers(db: Session = Depends(get_db)) -> list[Customer]:
 def create_customer(
     payload: CustomerCreate,
     db: Session = Depends(get_db),
-    api: Api = Depends(get_router_api),
+    gw: RouterGateway = Depends(get_router),
 ) -> dict:
     plan = db.get(Plan, payload.plan_id)
     if plan is None:
         raise HTTPException(404, f"No plan with id {payload.plan_id}")
     if db.scalar(select(Customer).where(Customer.pppoe_username == payload.pppoe_username)):
-        raise HTTPException(409, f"PPPoE username {payload.pppoe_username!r} already exists")
+        raise HTTPException(409, f"Account username {payload.pppoe_username!r} already exists")
 
-    ppp = PPPoEManager(api)
+    ppp = gw.ppp
+    static_mgr = gw.static
     customer = services.create_customer(
         db,
         ppp,
@@ -58,6 +58,9 @@ def create_customer(
         phone_number=payload.phone_number,
         email=payload.email,
         plan=plan,
+        connection_type=payload.connection_type,
+        static_ip=payload.static_ip,
+        static_mgr=static_mgr,
     )
 
     welcome_email_sent = False
@@ -81,16 +84,15 @@ def create_customer(
 
 
 @router.get("/{username}", response_model=CustomerStatusOut)
-def get_customer(
-    username: str,
-    db: Session = Depends(get_db),
-    api: Api = Depends(get_router_api),
-) -> dict:
+def get_customer(username: str, db: Session = Depends(get_db)) -> dict:
     customer = _get_customer(db, username)
-    ppp = PPPoEManager(api)
+    if customer.connection_type.value == "static":
+        online = customer.status.value == "active" and bool(customer.static_ip)
+    else:
+        online = username.strip().lower() in router_sync.active_usernames(db)
     return {
         **CustomerOut.model_validate(customer).model_dump(),
-        "online": ppp.is_online(username),
+        "online": online,
     }
 
 
@@ -99,9 +101,11 @@ def update_customer(
     username: str,
     payload: CustomerUpdate,
     db: Session = Depends(get_db),
+    gw: RouterGateway = Depends(get_router),
 ) -> Customer:
-    """Edit contact details (name/phone/email). Doesn't touch the router or subscription state."""
+    """Edit contact details and static IP."""
     customer = _get_customer(db, username)
+    static_mgr = gw.static
     try:
         return services.update_customer_details(
             db,
@@ -109,6 +113,8 @@ def update_customer(
             full_name=payload.full_name,
             phone_number=payload.phone_number,
             email=payload.email,
+            static_ip=payload.static_ip,
+            static_mgr=static_mgr,
         )
     except IntegrityError:
         db.rollback()
@@ -119,11 +125,12 @@ def update_customer(
 def suspend_customer(
     username: str,
     db: Session = Depends(get_db),
-    api: Api = Depends(get_router_api),
+    gw: RouterGateway = Depends(get_router),
 ) -> Customer:
     customer = _get_customer(db, username)
-    ppp = PPPoEManager(api)
-    return services.suspend_customer(db, ppp, customer)
+    ppp = gw.ppp
+    static_mgr = gw.static
+    return services.suspend_customer(db, ppp, customer, static_mgr=static_mgr)
 
 
 @router.post("/{username}/plan", response_model=CustomerOut)
@@ -131,12 +138,13 @@ def change_customer_plan(
     username: str,
     payload: ChangePlan,
     db: Session = Depends(get_db),
-    api: Api = Depends(get_router_api),
+    gw: RouterGateway = Depends(get_router),
 ) -> Customer:
     """Move a customer to a different plan (e.g. a bandwidth upgrade). Applies on the router immediately if they're active."""
     customer = _get_customer(db, username)
     new_plan = db.get(Plan, payload.plan_id)
     if new_plan is None:
         raise HTTPException(404, f"No plan with id {payload.plan_id}")
-    ppp = PPPoEManager(api)
-    return services.change_plan(db, ppp, customer, new_plan)
+    ppp = gw.ppp
+    static_mgr = gw.static
+    return services.change_plan(db, ppp, customer, new_plan, static_mgr=static_mgr)

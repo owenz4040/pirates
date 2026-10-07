@@ -3,6 +3,9 @@
 {% block content %}
 <h1>
   {{ customer.pppoe_username }}
+  <span style="font-size: 13px; font-weight: 600; text-transform: uppercase; padding: 4px 10px; border-radius: 6px; vertical-align: middle; background: {% if customer.connection_type.value == 'static' %}rgba(91, 157, 255, 0.15); color: #5b9dff; border: 1px solid rgba(91, 157, 255, 0.3);{% else %}rgba(223, 183, 88, 0.15); color: var(--gold); border: 1px solid rgba(223, 183, 88, 0.3);{% endif %}">
+    {{ customer.connection_type.value }}
+  </span>
   <span class="badge {{ customer.status.value }}">{{ customer.status.value }}</span>
   <span class="badge {{ 'online' if online else 'offline' }}">{{ 'online' if online else 'offline' }}</span>
 </h1>
@@ -24,13 +27,28 @@
           <label>Email (optional)</label>
           <input name="email" type="email" value="{{ customer.email or '' }}">
         </div>
+        {% if customer.connection_type.value == 'static' %}
+        <div>
+          <label>Static IP or Subnet Pool</label>
+          <input name="static_ip" value="{{ customer.static_ip or '' }}" placeholder="e.g. 192.168.88.50 or 192.168.88.48/29" required>
+        </div>
+        {% endif %}
       </div>
       <button type="submit" class="secondary">Save details</button>
     </form>
   </div>
   <div class="panel">
-    <span class="panel-title">Plan</span>
+    <span class="panel-title">Plan & Status</span>
     <div>{{ customer.plan.name }} ({{ customer.plan.rate_limit }}) &mdash; KES {{ customer.plan.price_kes }}</div>
+    {% if customer.connection_type.value == 'static' and customer.static_ip %}
+    <div class="muted" style="margin-top:14px">Static IP / Pool</div>
+    <div style="font-family: monospace; color: var(--gold); font-size: 1.05rem;">
+      {{ customer.static_ip }}
+      {% if '/' in customer.static_ip and not customer.static_ip.endswith('/32') %}
+        <span style="font-size: 11px; font-family: var(--font); font-weight: 600; padding: 2px 6px; border-radius: 4px; background: rgba(91, 157, 255, 0.2); color: #5b9dff; margin-left: 6px;">REPEATER POOL</span>
+      {% endif %}
+    </div>
+    {% endif %}
     <div class="muted" style="margin-top:14px">Expires</div>
     <div>
       {% if customer.expires_at %}
@@ -56,7 +74,7 @@
     <button type="submit" class="secondary">Generate paybill code (KES {{ customer.plan.price_kes }})</button>
   </form>
   <form class="inline" method="post" action="/dashboard/customers/{{ customer.pppoe_username }}/delete"
-        onsubmit="return confirm('Permanently delete {{ customer.pppoe_username }}? This removes their PPPoE account from the router and erases their payment history. This cannot be undone.');">
+        onsubmit="return confirm('Permanently delete {{ customer.pppoe_username }}? This removes their account/queue from the router and erases their payment history. This cannot be undone.');">
     <button type="submit" class="danger">Delete customer</button>
   </form>
 </div>

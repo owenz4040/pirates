@@ -10,20 +10,19 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from billing import services
+from billing import router_sync, services
+from billing.auth import require_admin
 from billing.db import get_db
 from billing.email import client as email_client
-from billing.models import Customer, Payment
+from billing.models import Customer, Payment, PaymentStatus
 from billing.mpesa import paystack
 from billing.mpesa.paystack import PaystackError
 from billing.schemas import _normalize_kenyan_phone
-from mikrotik.client import router_connection
-from mikrotik.pppoe import PPPoEManager
 
 router = APIRouter(tags=["mpesa"])
 
 
-@router.post("/customers/{username}/mpesa/charge", status_code=202)
+@router.post("/customers/{username}/mpesa/charge", status_code=202, dependencies=[Depends(require_admin)])
 def charge(username: str, db: Session = Depends(get_db)) -> dict[str, Any]:
     """Push an M-Pesa PIN prompt to the customer's phone, via Paystack, for their plan's price."""
     customer = db.scalar(select(Customer).where(Customer.pppoe_username == username))
@@ -36,7 +35,7 @@ def charge(username: str, db: Session = Depends(get_db)) -> dict[str, Any]:
     return {"reference": reference}
 
 
-@router.post("/customers/{username}/mpesa/paybill", status_code=202)
+@router.post("/customers/{username}/mpesa/paybill", status_code=202, dependencies=[Depends(require_admin)])
 def paybill_charge(username: str, db: Session = Depends(get_db)) -> dict[str, Any]:
     """
     Generate a one-time Paystack paybill code for this customer's plan price.
@@ -95,7 +94,7 @@ def public_mpesa_prompt(username: str, token: str, db: Session = Depends(get_db)
         _pay_page(
             "Check your phone",
             f"An M-Pesa PIN prompt has been sent to {customer.phone_number}. Enter your PIN to complete "
-            "payment - your internet activates automatically once it's confirmed.",
+            "payment - your internet reconnects automatically within about a minute of confirmation.",
             ok=True,
         )
     )
@@ -140,17 +139,22 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)) -> d
 
     if payment is None:
         return {"status": "ignored"}
+    if payment.status != PaymentStatus.pending:
+        # Paystack retries/duplicates the same event - already handled, and
+        # confirming again would extend the subscription a second time.
+        return {"status": "duplicate"}
 
     if result["event"] == "charge.success" and result["status"] == "success":
-        with router_connection() as api:
-            ppp = PPPoEManager(api)
-            payment = services.confirm_payment(
-                db,
-                ppp,
-                payment,
-                mpesa_receipt=str(result["paystack_transaction_id"]),
-                raw_callback=payload,
-            )
+        # Queues the reconnect - the router applies it on its next sync (within a minute).
+        gw = router_sync.gateway(db)
+        payment = services.confirm_payment(
+            db,
+            gw.ppp,
+            payment,
+            mpesa_receipt=str(result["paystack_transaction_id"]),
+            raw_callback=payload,
+            static_mgr=gw.static,
+        )
         if payment.customer.email:
             try:
                 subject, html, text = services.compose_receipt_email(payment.customer, payment)
