@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Import users - Pirates Billing{% endblock %}
+{% block content %}
+{% if waiting %}<meta http-equiv="refresh" content="10">{% endif %}
+<h1>Import PPPoE users</h1>
+<p class="muted" style="margin-top:0">
+  Brings PPPoE accounts that already exist on the router into billing. Importing only creates billing records.
+  Nothing is changed on the router, so no one gets disconnected. Passwords stay on the router.
+</p>
+
+<div class="panel">
+  {% if waiting %}
+    <span class="panel-title">Waiting for the router...</span>
+    <p class="muted" style="margin:0">The router sends its user list on its next sync, usually within a minute. This page refreshes on its own.</p>
+  {% else %}
+    <span class="panel-title">{% if reported_local %}User list from {{ reported_local.strftime("%d %b %H:%M") }} EAT{% else %}Get the user list{% endif %}</span>
+    <form method="post" action="/dashboard/router/import/request">
+      <button type="submit" {% if reported_local %}class="secondary"{% endif %}>{% if reported_local %}Refresh from router{% else %}Load users from router{% endif %}</button>
+    </form>
+    {% if reported_local %}
+    <p class="muted" style="margin-bottom:0">
+      {{ candidates|length }} not yet in billing{% if skipped_existing %}, {{ skipped_existing }} already imported{% endif %}.
+    </p>
+    {% endif %}
+  {% endif %}
+</div>
+
+{% if missing_profiles and not waiting %}
+<div class="panel">
+  <span class="panel-title">Router profiles with no matching plan</span>
+  <p class="muted" style="margin-top:0">
+    {% for p in missing_profiles %}<strong>{{ p.name }}</strong>{% if p.rate_limit %} ({{ p.rate_limit }}){% endif %}{{ ", " if not loop.last }}{% endfor %}.
+    Create a plan for each so these users get the right plan, then set the prices under Plans. You can also pick an existing plan per user below.
+  </p>
+  <form method="post" action="/dashboard/router/import/plans">
+    <button type="submit" class="secondary">Create {{ missing_profiles|length }} plan{{ "s" if missing_profiles|length > 1 }}</button>
+  </form>
+</div>
+{% endif %}
+
+{% if candidates and not waiting %}
+<form method="post" action="/dashboard/router/import">
+  <div class="panel">
+    <span class="panel-title">Choose users to import</span>
+    <div class="field-row" style="align-items:flex-end">
+      <div>
+        <label>Set every expiry to (Kenya time)</label>
+        <input type="datetime-local" id="bulk-expiry" value="{{ default_expiry }}">
+      </div>
+      <div><button type="button" class="secondary" id="apply-expiry">Apply to all</button></div>
+      <div><label><input type="checkbox" id="pick-all" checked> Select all</label></div>
+    </div>
+    <p class="muted" style="margin:0">
+      Phone is optional, but M-Pesa prompts and reminders need it, so add it now or later. Users disabled on the router
+      are imported as expired. Leave the expiry blank for no expiry.
+    </p>
+  </div>
+
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr><th></th><th>Username</th><th>Name</th><th>Phone</th><th>Plan</th><th>Expires</th></tr>
+      </thead>
+      <tbody>
+        {% for c in candidates %}
+        {% set v = values.get(c.name, {}) %}
+        <tr {% if errors.get(c.name) %}style="outline:1px solid var(--red)"{% endif %}>
+          <td data-label="Import">
+            <input type="checkbox" name="pick" value="{{ c.name }}" class="pick"
+                   {% if picked is not defined or c.name in picked %}checked{% endif %}>
+          </td>
+          <td data-label="Username">
+            {{ c.name }}
+            {% if c.disabled %}<span class="badge expired">disabled</span>{% endif %}
+            {% if errors.get(c.name) %}<div style="color:var(--red);font-size:0.8rem">{{ errors[c.name] }}</div>{% endif %}
+          </td>
+          <td data-label="Name"><input name="name::{{ c.name }}" value="{{ v.name if v else (c.comment or c.name) }}" style="width:100%"></td>
+          <td data-label="Phone"><input name="phone::{{ c.name }}" value="{{ v.phone if v else '' }}" placeholder="2547XXXXXXXX" style="width:100%"></td>
+          <td data-label="Plan">
+            {% set chosen = (v.plan|int if v and v.plan else c.plan_id) %}
+            <select name="plan::{{ c.name }}" style="width:100%">
+              <option value="">Profile: {{ c.profile }}</option>
+              {% for p in plans %}
+              <option value="{{ p.id }}" {{ "selected" if p.id == chosen }}>{{ p.name }} - KES {{ p.price_kes }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          <td data-label="Expires">
+            <input type="datetime-local" name="expires::{{ c.name }}" class="expiry"
+                   value="{{ v.expires if v else default_expiry }}" {% if c.disabled %}disabled title="Disabled on the router - imported as expired"{% endif %}>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <button type="submit">Import selected users</button>
+</form>
+{% elif reported_local and not waiting %}
+<p class="muted">Every PPPoE user on the router is already in billing.</p>
+{% endif %}
+
+<script>
+  const pickAll = document.getElementById("pick-all");
+  if (pickAll) pickAll.addEventListener("change", () => document.querySelectorAll(".pick").forEach((b) => (b.checked = pickAll.checked)));
+  const apply = document.getElementById("apply-expiry");
+  if (apply) apply.addEventListener("click", () => {
+    const value = document.getElementById("bulk-expiry").value;
+    document.querySelectorAll(".expiry:not([disabled])").forEach((input) => (input.value = value));
+  });
+</script>
+{% endblock %}

@@ -250,7 +250,7 @@ def delete_customer(username: str, db: Session = Depends(get_db), gw: RouterGate
 def update_details(
     username: str,
     full_name: str = Form(...),
-    phone_number: str = Form(...),
+    phone_number: str = Form(""),
     email: str = Form(""),
     static_ip: str = Form(""),
     db: Session = Depends(get_db),
@@ -260,7 +260,7 @@ def update_details(
     if customer is None:
         return _redirect("/dashboard", flash=f"No customer {username!r}", flash_kind="error")
     try:
-        phone_number = _normalize_kenyan_phone(phone_number)
+        phone_number = _normalize_kenyan_phone(phone_number) if phone_number.strip() else None
     except ValueError as exc:
         return _redirect(f"/dashboard/customers/{username}", flash=str(exc), flash_kind="error")
 
@@ -391,6 +391,8 @@ def mpesa_charge(username: str, db: Session = Depends(get_db)):
     if customer is None:
         return _redirect("/dashboard", flash=f"No customer {username!r}", flash_kind="error")
     plan = customer.plan
+    if not customer.phone_number:
+        return _redirect(f"/dashboard/customers/{username}", flash="Add a phone number first", flash_kind="error")
 
     phone_number = customer.phone_number
     if not phone_number.startswith("+"):
@@ -544,3 +546,130 @@ def router_rotate_token(db: Session = Depends(get_db)):
         "/dashboard/router",
         flash="New token generated - paste the updated setup script into the router, the old one no longer works",
     )
+
+
+# --- import existing PPPoE users from the router ---------------------------------
+
+IMPORTABLE_SERVICES = {"pppoe", "any", ""}
+
+
+def _import_state(db: Session) -> dict:
+    device = router_sync.get_or_create_device(db)
+    requested = device.secrets_requested_at
+    reported = device.secrets_reported_at
+    waiting = requested is not None and (reported is None or _to_eat(reported) < _to_eat(requested))
+
+    existing = {u.lower() for u in db.scalars(select(Customer.pppoe_username))}
+    plans = db.scalars(select(Plan).order_by(Plan.price_kes)).all()
+    plans_by_name = {p.name: p for p in plans}
+    profiles = {p["name"]: p.get("rate_limit", "") for p in (device.router_profiles or [])}
+
+    candidates, skipped_existing = [], 0
+    for secret in device.router_secrets or []:
+        if secret.get("service", "") not in IMPORTABLE_SERVICES:
+            continue
+        if secret["name"].lower() in existing:
+            skipped_existing += 1
+            continue
+        plan = plans_by_name.get(secret["profile"])
+        candidates.append({**secret, "plan_id": plan.id if plan else None})
+
+    missing_profiles = sorted(
+        {c["profile"] for c in candidates if c["plan_id"] is None and c["profile"] not in router_sync.BUILTIN_PROFILES}
+    )
+    return {
+        "device": device,
+        "waiting": waiting,
+        "reported_local": _to_eat(reported),
+        "candidates": candidates,
+        "skipped_existing": skipped_existing,
+        "plans": plans,
+        "missing_profiles": [{"name": n, "rate_limit": profiles.get(n, "")} for n in missing_profiles],
+        "default_expiry": (datetime.now(EAT) + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M"),
+    }
+
+
+@router.get("/router/import")
+def import_page(request: Request, db: Session = Depends(get_db)):
+    return templates.TemplateResponse(
+        request, "router_import.html", {**_import_state(db), "errors": {}, "values": {}, **_flash_context(request)}
+    )
+
+
+@router.post("/router/import/request")
+def import_request(request: Request, db: Session = Depends(get_db)):
+    router_sync.request_secrets_export(db, settings.public_base_url or str(request.base_url))
+    return _redirect("/dashboard/router/import", flash="Asked the router for its user list - this takes about a minute")
+
+
+@router.post("/router/import/plans")
+def import_create_plans(db: Session = Depends(get_db)):
+    """Create a plan per unmatched router profile. No router command - the profile already exists there."""
+    state = _import_state(db)
+    for profile in state["missing_profiles"]:
+        db.add(Plan(name=profile["name"], rate_limit=profile["rate_limit"] or "", price_kes=Decimal("0"), duration_days=30))
+    db.commit()
+    names = ", ".join(p["name"] for p in state["missing_profiles"])
+    return _redirect(
+        "/dashboard/router/import",
+        flash=f"Created plans: {names}. Set their prices under Plans - they start at KES 0.",
+    )
+
+
+@router.post("/router/import")
+async def import_users(request: Request, db: Session = Depends(get_db)):
+    form = await request.form()
+    state = _import_state(db)
+    by_name = {c["name"]: c for c in state["candidates"]}
+    plans = {p.id: p for p in state["plans"]}
+    taken_phones = {p for p in db.scalars(select(Customer.phone_number)) if p}
+
+    rows, errors, values = [], {}, {}
+    for username in form.getlist("pick"):
+        secret = by_name.get(username)
+        if secret is None:
+            continue  # already imported or no longer on the router
+        full_name = (form.get(f"name::{username}") or "").strip() or username
+        phone_raw = (form.get(f"phone::{username}") or "").strip()
+        plan_raw = form.get(f"plan::{username}") or ""
+        expires_raw = (form.get(f"expires::{username}") or "").strip()
+        values[username] = {"name": full_name, "phone": phone_raw, "plan": plan_raw, "expires": expires_raw}
+
+        phone = None
+        if phone_raw:
+            try:
+                phone = _normalize_kenyan_phone(phone_raw)
+            except ValueError as exc:
+                errors[username] = str(exc)
+                continue
+            if phone in taken_phones:
+                errors[username] = f"Phone {phone} is already used by another customer"
+                continue
+            taken_phones.add(phone)
+        plan = plans.get(int(plan_raw)) if plan_raw.isdigit() else None
+        if plan is None:
+            errors[username] = "Choose a plan"
+            continue
+        expires = None
+        if expires_raw:
+            try:
+                expires = datetime.strptime(expires_raw, "%Y-%m-%dT%H:%M").replace(tzinfo=EAT).astimezone(timezone.utc)
+            except ValueError:
+                errors[username] = "Invalid expiry date"
+                continue
+        rows.append(services.ImportRow(username, full_name, phone, plan, expires, bool(secret.get("disabled"))))
+
+    if errors:
+        return templates.TemplateResponse(
+            request,
+            "router_import.html",
+            {
+                **state, "errors": errors, "values": values, "picked": set(form.getlist("pick")),
+                "flash": f"Nothing imported - fix the {len(errors)} highlighted row(s)", "flash_kind": "error",
+            },
+            status_code=400,
+        )
+    if not rows:
+        return _redirect("/dashboard/router/import", flash="Tick at least one user to import", flash_kind="error")
+    services.import_router_users(db, rows)
+    return _redirect("/dashboard", flash=f"Imported {len(rows)} customers from the router")

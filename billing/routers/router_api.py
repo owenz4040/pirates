@@ -62,3 +62,12 @@ def cron_daily(request: Request, db: Session = Depends(get_db)) -> dict[str, obj
     if not settings.cron_secret or not secrets.compare_digest(request.headers.get("authorization", ""), expected):
         raise HTTPException(401, "Unauthorized")
     return run_daily(db)
+
+
+@router.post("/router/secrets")
+async def router_secrets(request: Request, db: Session = Depends(get_db)) -> dict[str, str]:
+    """Receives the router's PPP secret/profile export (see router_sync.export_script) for importing users."""
+    device = _device(request, db)
+    body = (await request.body()).decode("utf-8", errors="replace")
+    router_sync.ingest_secrets(db, device, body)
+    return {"status": "ok"}

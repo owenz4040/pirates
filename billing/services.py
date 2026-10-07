@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -222,7 +223,7 @@ def request_paybill_charge(db: Session, customer: Customer) -> dict[str, Any]:
         db,
         customer=customer,
         amount_kes=plan.price_kes,
-        phone_number=customer.phone_number,
+        phone_number=customer.phone_number or "",
         checkout_request_id=reference,
     )
     return {
@@ -241,6 +242,8 @@ def request_mpesa_charge(db: Session, customer: Customer) -> str:
     reference the webhook will echo back.
     """
     plan = customer.plan
+    if not customer.phone_number:
+        raise paystack.PaystackError(f"{customer.pppoe_username} has no phone number on file - add one first")
     reference = f"{customer.pppoe_username}-{uuid.uuid4().hex[:12]}"
     phone_number = customer.phone_number
     if not phone_number.startswith("+"):
@@ -523,6 +526,44 @@ def set_expiry(
     db.commit()
     db.refresh(customer)
     return customer
+
+
+@dataclass
+class ImportRow:
+    username: str
+    full_name: str
+    phone_number: str | None
+    plan: Plan
+    expires_at: datetime | None  # ignored for users disabled on the router
+    disabled: bool
+
+
+def import_router_users(db: Session, rows: list[ImportRow]) -> list[Customer]:
+    """
+    Create billing records for PPPoE users that already exist on the router.
+    Nothing is queued for the router - the accounts are already there and set
+    up, so importing never disconnects or changes anyone. Users disabled on
+    the router come in as expired; the rest as active until expires_at (a
+    past date is left to the expiry sweep, which also disables them on the
+    router, so the two never disagree).
+    """
+    now = datetime.now(timezone.utc)
+    created = []
+    for row in rows:
+        active = not row.disabled
+        customer = Customer(
+            pppoe_username=row.username,
+            full_name=row.full_name,
+            phone_number=row.phone_number,
+            connection_type=ConnectionType.pppoe,
+            plan_id=row.plan.id,
+            status=CustomerStatus.active if active else CustomerStatus.expired,
+            expires_at=row.expires_at if not row.disabled else now,
+        )
+        db.add(customer)
+        created.append(customer)
+    db.commit()
+    return created
 
 
 def create_plan(
