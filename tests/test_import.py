@@ -145,3 +145,12 @@ def test_customer_without_phone_gets_clear_mpesa_error(client, db):
     assert client.get("/dashboard/customers/nophone").status_code == 200
     resp = client.post("/dashboard/customers/nophone/mpesa/charge", follow_redirects=False)
     assert "Add+a+phone+number+first" in resp.headers["location"]
+
+
+def test_dashboard_points_to_import(client, db):
+    assert "Import from router" in client.get("/dashboard").text  # never exported yet
+    device = router_sync.get_or_create_device(db)
+    _report(client, device.token, *ROUTER_EXPORT)
+    page = client.get("/dashboard").text
+    assert "3 PPPoE users on your router aren&#39;t in billing yet" in page or "3 PPPoE users on your router aren't in billing yet" in page
+    assert 'href="/dashboard/router/import"' in page
