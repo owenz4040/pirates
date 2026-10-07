@@ -47,6 +47,9 @@ def create_customer(
     if db.scalar(select(Customer).where(Customer.pppoe_username == payload.pppoe_username)):
         raise HTTPException(409, f"Account username {payload.pppoe_username!r} already exists")
 
+    if db.scalar(select(Customer).where(Customer.phone_number == payload.phone_number)):
+        raise HTTPException(409, f"Phone number {payload.phone_number!r} is already in use")
+
     ppp = gw.ppp
     static_mgr = gw.static
     customer = services.create_customer(

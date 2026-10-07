@@ -738,3 +738,46 @@ def send_expiry_reminders(db: Session) -> tuple[int, int]:
         
     db.commit()
     return count_2, count_1
+
+
+@dataclass
+class MonthIncome:
+    year: int
+    month: int
+    label: str  # e.g. "Oct 2026"
+    total_kes: Decimal
+    payments: int
+
+
+def monthly_income(db: Session, months: int = 12, now: datetime | None = None) -> list[MonthIncome]:
+    """
+    Confirmed payments summed per calendar month in Kenya time, oldest first,
+    for the last `months` months including the current one (empty months are 0).
+    """
+    now_eat = (now or datetime.now(timezone.utc)).astimezone(_EAT)
+    keys = []
+    year, month = now_eat.year, now_eat.month
+    for _ in range(months):
+        keys.append((year, month))
+        year, month = (year - 1, 12) if month == 1 else (year, month - 1)
+    keys.reverse()
+
+    start = datetime(keys[0][0], keys[0][1], 1, tzinfo=_EAT)
+    totals = {key: [Decimal("0"), 0] for key in keys}
+    rows = db.execute(
+        select(Payment.amount_kes, Payment.confirmed_at).where(
+            Payment.status == PaymentStatus.confirmed, Payment.confirmed_at >= start
+        )
+    )
+    for amount, confirmed_at in rows:
+        if confirmed_at.tzinfo is None:  # stored as UTC
+            confirmed_at = confirmed_at.replace(tzinfo=timezone.utc)
+        local = confirmed_at.astimezone(_EAT)
+        bucket = totals.get((local.year, local.month))
+        if bucket is not None:
+            bucket[0] += amount
+            bucket[1] += 1
+    return [
+        MonthIncome(y, m, datetime(y, m, 1).strftime("%b %Y"), totals[(y, m)][0], totals[(y, m)][1])
+        for y, m in keys
+    ]

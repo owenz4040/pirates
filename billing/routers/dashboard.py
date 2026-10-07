@@ -105,6 +105,7 @@ def customers_page(
         rows = [r for r in rows if getattr(r["customer"].connection_type, "value", str(r["customer"].connection_type)) == "static"]
 
     plans = db.scalars(select(Plan)).all()
+    income = services.monthly_income(db)
     return templates.TemplateResponse(
         request,
         "customers.html",
@@ -114,9 +115,55 @@ def customers_page(
             "stats": stats,
             "filter_type": filter,
             "unimported": _unimported_count(db, {c.pppoe_username.lower() for c in customers}),
+            "income": income,
+            "income_chart": _income_chart(income),
             **_flash_context(request),
         },
     )
+
+
+def _nice_step(raw: float) -> float:
+    """Round a gridline step up to 1, 2, 2.5 or 5 x 10^n."""
+    import math
+
+    magnitude = 10 ** math.floor(math.log10(raw))
+    for factor in (1, 2, 2.5, 5, 10):
+        if raw <= factor * magnitude:
+            return factor * magnitude
+    return 10 * magnitude
+
+
+def _income_chart(months: list[services.MonthIncome]) -> dict:
+    """SVG geometry for the monthly income column chart (viewBox 720 x 240)."""
+    width, height = 720, 240
+    left, right, top, bottom = 64, 8, 16, 28
+    plot_w, plot_h = width - left - right, height - top - bottom
+    peak = max((float(m.total_kes) for m in months), default=0)
+    step = _nice_step(peak / 4) if peak > 0 else 1
+    axis_max = step * max(1, -(-peak // step))  # ceil to a whole number of steps
+    slot = plot_w / len(months)
+    bar_w = min(24, slot * 0.6)
+    bars = []
+    for i, m in enumerate(months):
+        value = float(m.total_kes)
+        h = plot_h * value / axis_max
+        x = left + slot * i + (slot - bar_w) / 2
+        y = top + plot_h - h
+        r = min(4, h, bar_w / 2)
+        # Rounded top corners, square at the baseline.
+        path = (
+            f"M{x:.1f},{top + plot_h:.1f} V{y + r:.1f} Q{x:.1f},{y:.1f} {x + r:.1f},{y:.1f} "
+            f"H{x + bar_w - r:.1f} Q{x + bar_w:.1f},{y:.1f} {x + bar_w:.1f},{y + r:.1f} V{top + plot_h:.1f} Z"
+        ) if h > 0 else ""
+        bars.append({
+            "month": m, "path": path, "cx": x + bar_w / 2, "y": y,
+            "slot_x": left + slot * i, "slot_w": slot, "short": m.label[:3],
+        })
+    ticks = [{"value": step * k, "y": top + plot_h - plot_h * step * k / axis_max} for k in range(int(axis_max / step) + 1)]
+    return {
+        "width": width, "height": height, "left": left, "right": width - right, "top": top,
+        "baseline": top + plot_h, "bars": bars, "ticks": ticks, "empty": peak == 0,
+    }
 
 
 def _unimported_count(db: Session, existing: set[str]) -> int | None:
@@ -167,6 +214,13 @@ def create_customer(
         phone_number = _normalize_kenyan_phone(phone_number)
     except ValueError as exc:
         return _redirect("/dashboard/customers/new", flash=str(exc), flash_kind="error")
+    owner = db.scalar(select(Customer).where(Customer.phone_number == phone_number))
+    if owner is not None:
+        return _redirect(
+            "/dashboard/customers/new",
+            flash=f"Phone {phone_number} already belongs to {owner.pppoe_username} ({owner.full_name})",
+            flash_kind="error",
+        )
 
     conn_type = ConnectionType.static if connection_type == "static" else ConnectionType.pppoe
     clean_static_ip = None
@@ -181,22 +235,29 @@ def create_customer(
         if not pppoe_password:
             return _redirect("/dashboard/customers/new", flash="Password is required for PPPoE users", flash_kind="error")
 
-    ppp = gw.ppp
-    static_mgr = gw.static
-    customer = services.create_customer(
-        db,
-        ppp,
-        pppoe_username=pppoe_username,
-        pppoe_password=pppoe_password,
-        full_name=full_name,
-        phone_number=phone_number,
-        email=email or None,
-        plan=plan,
-        connection_type=conn_type,
-        static_ip=clean_static_ip,
-        no_expiry=no_expiry,
-        static_mgr=static_mgr,
-    )
+    try:
+        customer = services.create_customer(
+            db,
+            gw.ppp,
+            pppoe_username=pppoe_username,
+            pppoe_password=pppoe_password,
+            full_name=full_name,
+            phone_number=phone_number,
+            email=email or None,
+            plan=plan,
+            connection_type=conn_type,
+            static_ip=clean_static_ip,
+            no_expiry=no_expiry,
+            static_mgr=gw.static,
+        )
+    except IntegrityError:
+        # A race with another signup, or a clash the checks above missed - nothing was saved or queued.
+        db.rollback()
+        return _redirect(
+            "/dashboard/customers/new",
+            flash=f"Couldn't create {pppoe_username}: the username or phone number is already in use",
+            flash_kind="error",
+        )
 
     if not customer.email:
         return _redirect(f"/dashboard/customers/{pppoe_username}", flash=f"Created {pppoe_username}")

@@ -85,6 +85,7 @@
   /* Main Content Area */
   .main-wrapper {
     flex-grow: 1;
+    min-width: 0; /* let wide content (tables) shrink instead of pushing the page past the screen */
     margin-left: var(--sidebar-width);
     min-height: 100vh;
     display: flex;
@@ -99,7 +100,8 @@
   }
   .hamburger { background: none; border: none; color: var(--text); font-size: 1.5rem; cursor: pointer; padding: 0; }
   
-  main { max-width: 1100px; width: 100%; margin: 0 auto; padding: 40px 32px 80px; }
+  main { max-width: 1100px; width: 100%; min-width: 0; margin: 0 auto; padding: 40px 32px 80px; }
+  .table-wrapper { overflow-x: auto; }
   h1 { font-weight: 600; font-size: 1.8rem; margin: 0 0 24px; color: var(--text); letter-spacing: 0.02em; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   h2 { font-size: 0.85rem; margin: 40px 0 16px; color: var(--gold); text-transform: uppercase; letter-spacing: 0.15em; font-weight: 700; }
   
