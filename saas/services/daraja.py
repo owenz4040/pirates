@@ -201,3 +201,58 @@ def parse_stk_callback(callback_data: dict[str, Any]) -> dict[str, Any]:
                 extracted["transaction_date"] = str(val)
 
     return extracted
+
+
+def query_stk_status(
+    *,
+    consumer_key: str,
+    consumer_secret: str,
+    passkey: str,
+    shortcode: str,
+    checkout_request_id: str,
+    is_sandbox: bool = False,
+) -> dict[str, Any]:
+    """Queries Daraja STK Push transaction status via /mpesa/stkpushquery/v1/query.
+
+    Used for out-of-band verification when callbacks are delayed or ambiguous.
+    """
+    token = get_oauth_token(consumer_key, consumer_secret, is_sandbox)
+    base_url = _get_daraja_base_url(is_sandbox)
+    url = f"{base_url}/mpesa/stkpushquery/v1/query"
+
+    now = datetime.now(timezone.utc)
+    timestamp_str = now.strftime("%Y%m%d%H%M%S")
+    password = generate_stk_password(shortcode, passkey, timestamp_str)
+
+    payload = {
+        "BusinessShortCode": shortcode.strip(),
+        "Password": password,
+        "Timestamp": timestamp_str,
+        "CheckoutRequestID": checkout_request_id.strip(),
+    }
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        response = httpx.post(url, json=payload, headers=headers, timeout=15.0)
+    except httpx.RequestError as exc:
+        raise DarajaError(f"Network error querying STK status: {exc}") from exc
+
+    try:
+        data = response.json()
+    except ValueError:
+        response.raise_for_status()
+        raise DarajaError(f"Invalid non-JSON response from STK status query ({response.status_code})") from None
+
+    result_code = data.get("ResultCode")
+    return {
+        "response_code": data.get("ResponseCode"),
+        "response_description": data.get("ResponseDescription"),
+        "merchant_request_id": data.get("MerchantRequestID"),
+        "checkout_request_id": data.get("CheckoutRequestID"),
+        "result_code": int(result_code) if result_code is not None else None,
+        "result_desc": data.get("ResultDesc"),
+        "is_successful": (result_code == "0" or result_code == 0),
+    }

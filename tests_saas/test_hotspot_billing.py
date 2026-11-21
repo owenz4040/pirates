@@ -184,7 +184,7 @@ def test_mpesa_purchase_initiation(client: TestClient, db_session: Session, seed
 
 
 def test_mpesa_callback_automatic_activation(client: TestClient, db_session: Session, seed_data: dict):
-    """Test Safaricom Daraja STK callback automatically activates voucher and queues router command."""
+    """Test Safaricom Daraja STK callback places voucher in pending_provisioning, and router ACK promotes to active."""
     tenant_a = seed_data["tenant_a"]
     router_a = seed_data["router_a"]
 
@@ -199,19 +199,27 @@ def test_mpesa_callback_automatic_activation(client: TestClient, db_session: Ses
     db_session.add(pkg)
     db_session.flush()
 
+    pay_config = TenantPaymentConfig(
+        tenant_id=tenant_a.id,
+        mpesa_enabled=True,
+        mpesa_shortcode="174379",
+    )
+    callback_token = pay_config.generate_callback_token()
+    db_session.add(pay_config)
+
     payment = CustomerPayment(
         tenant_id=tenant_a.id,
         package_id=pkg.id,
         router_id=router_a.id,
         gateway="mpesa",
         reference="CO-HOT-MP-TEST01",
+        checkout_request_id="ws_CO_TEST_CALLBACK_11",
         amount_kes=Decimal("50.00"),
         phone_number="254712345678",
         status="pending",
         client_mac="AA:BB:CC:DD:EE:FF",
         client_ip="10.5.50.45",
         link_login_only="http://10.5.50.1/login",
-        metadata_json=json.dumps({"checkout_request_id": "ws_CO_TEST_CALLBACK_11"}),
     )
     db_session.add(payment)
     db_session.commit()
@@ -235,7 +243,12 @@ def test_mpesa_callback_automatic_activation(client: TestClient, db_session: Ses
         }
     }
 
-    resp = client.post(f"/api/webhook/mpesa/{tenant_a.id}", json=callback_payload)
+    # 1. Unauthenticated callback without token must be rejected (401)
+    unauth_resp = client.post(f"/api/webhook/mpesa/{tenant_a.id}", json=callback_payload)
+    assert unauth_resp.status_code == 401
+
+    # 2. Authenticated callback with valid token succeeds (200)
+    resp = client.post(f"/api/webhook/mpesa/{tenant_a.id}?token={callback_token}", json=callback_payload)
     assert resp.status_code == 200
     res_data = resp.json()
     assert res_data["ResultCode"] == 0
@@ -245,14 +258,16 @@ def test_mpesa_callback_automatic_activation(client: TestClient, db_session: Ses
     assert payment.provider_reference == "QGH786XYZ"
     assert payment.paid_at is not None
 
+    # Two-stage check: Voucher is pending_provisioning until router acknowledges command
     voucher = db_session.scalar(
         select(HotspotVoucher).where(HotspotVoucher.customer_payment_id == payment.id)
     )
     assert voucher is not None
-    assert voucher.status == VoucherStatus.active
+    assert voucher.status == VoucherStatus.pending_provisioning
     assert voucher.package_id == pkg.id
     assert voucher.tenant_id == tenant_a.id
 
+    # Router command is queued
     cmd = db_session.scalar(
         select(RouterCommand)
         .where(RouterCommand.router_id == router_a.id)
@@ -260,12 +275,22 @@ def test_mpesa_callback_automatic_activation(client: TestClient, db_session: Ses
     )
     assert cmd is not None
     assert voucher.code in cmd.script
-    assert f"COwen-Voucher:{voucher.id}" in cmd.script
     assert cmd.status == "pending"
+
+    # Router acknowledges execution
+    ack_resp = client.post(
+        "/api/router/ack",
+        headers={"X-Router-Token": "alpha_token_1"},
+        data={"ok": cmd.id, "failed": ""},
+    )
+    assert ack_resp.status_code == 200
+
+    db_session.refresh(voucher)
+    assert voucher.status == VoucherStatus.active
 
 
 def test_paystack_webhook_automatic_activation(client: TestClient, db_session: Session, seed_data: dict):
-    """Test Paystack charge.success webhook activates voucher with HMAC signature."""
+    """Test Paystack charge.success webhook activates voucher in pending_provisioning, then active on router ACK."""
     tenant_a = seed_data["tenant_a"]
     router_a = seed_data["router_a"]
 
@@ -330,8 +355,21 @@ def test_paystack_webhook_automatic_activation(client: TestClient, db_session: S
         select(HotspotVoucher).where(HotspotVoucher.customer_payment_id == payment.id)
     )
     assert voucher is not None
+    assert voucher.status == VoucherStatus.pending_provisioning
+
+    # Router acknowledges execution
+    cmd = db_session.scalar(
+        select(RouterCommand).where(RouterCommand.router_id == router_a.id).order_by(RouterCommand.created_at.desc())
+    )
+    ack_resp = client.post(
+        "/api/router/ack",
+        headers={"X-Router-Token": "alpha_token_1"},
+        data={"ok": cmd.id, "failed": ""},
+    )
+    assert ack_resp.status_code == 200
+
+    db_session.refresh(voucher)
     assert voucher.status == VoucherStatus.active
-    assert voucher.package_id == pkg.id
 
 
 def test_payment_status_polling(client: TestClient, db_session: Session, seed_data: dict):
@@ -361,9 +399,10 @@ def test_payment_status_polling(client: TestClient, db_session: Session, seed_da
     db_session.add(payment)
     db_session.commit()
 
+    # 1. While pending payment
     resp = client.get(f"/api/portal/payment-status?reference={payment.reference}")
     assert resp.status_code == 200
-    assert resp.json()["status"] == "pending"
+    assert resp.json()["status"] == "awaiting_payment"
 
     voucher = HotspotVoucher(
         tenant_id=tenant_a.id,
@@ -371,7 +410,7 @@ def test_payment_status_polling(client: TestClient, db_session: Session, seed_da
         router_id=router_a.id,
         code="POLL-VOUCH-77",
         password="secretpassword",
-        status=VoucherStatus.active,
+        status=VoucherStatus.pending_provisioning,
         customer_payment_id=payment.id,
     )
     db_session.add(voucher)
@@ -381,9 +420,19 @@ def test_payment_status_polling(client: TestClient, db_session: Session, seed_da
     payment.voucher_id = voucher.id
     db_session.commit()
 
-    resp = client.get(f"/api/portal/payment-status?reference={payment.reference}")
-    assert resp.status_code == 200
-    data = resp.json()
+    # 2. While pending router provisioning
+    resp_prov = client.get(f"/api/portal/payment-status?reference={payment.reference}")
+    assert resp_prov.status_code == 200
+    assert resp_prov.json()["status"] == "provisioning"
+    assert "voucher_code" not in resp_prov.json()
+
+    # 3. After router acknowledges command execution
+    voucher.status = VoucherStatus.active
+    db_session.commit()
+
+    resp_done = client.get(f"/api/portal/payment-status?reference={payment.reference}")
+    assert resp_done.status_code == 200
+    data = resp_done.json()
     assert data["status"] == "completed"
     assert data["voucher_code"] == "POLL-VOUCH-77"
     assert data["voucher_password"] == "secretpassword"

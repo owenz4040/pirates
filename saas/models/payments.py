@@ -1,13 +1,16 @@
 """Tenant-specific payment configs and platform subscription transactions."""
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
+import secrets
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Numeric, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from saas.database import SaasBase
@@ -40,6 +43,9 @@ class TenantPaymentConfig(SaasBase):
     mpesa_consumer_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     mpesa_consumer_secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     mpesa_passkey_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mpesa_callback_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mpesa_callback_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    previous_callback_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # Tenant's Own Paystack Configuration (for their customers)
     paystack_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -73,6 +79,34 @@ class TenantPaymentConfig(SaasBase):
 
     def get_paystack_secret(self) -> str | None:
         return decrypt_secret(self.paystack_secret_key_encrypted) if self.paystack_secret_key_encrypted else None
+
+    def generate_callback_token(self) -> str:
+        """Generates a secure random 32-byte hex token and updates hashes with rotation support."""
+        raw_token = secrets.token_hex(32)
+        if self.mpesa_callback_token_hash:
+            self.previous_callback_token_hash = self.mpesa_callback_token_hash
+        self.mpesa_callback_token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        self.mpesa_callback_token_encrypted = encrypt_secret(raw_token)
+        return raw_token
+
+    def get_callback_token(self) -> str:
+        """Retrieves active raw callback token, generating a new one if missing."""
+        if self.mpesa_callback_token_encrypted:
+            decrypted = decrypt_secret(self.mpesa_callback_token_encrypted)
+            if decrypted:
+                return decrypted
+        return self.generate_callback_token()
+
+    def verify_callback_token(self, candidate_token: str | None) -> bool:
+        """Constant-time verification of candidate callback token against primary and rotated hashes."""
+        if not candidate_token:
+            return False
+        candidate_hash = hashlib.sha256(candidate_token.strip().encode("utf-8")).hexdigest()
+        if self.mpesa_callback_token_hash and hmac.compare_digest(candidate_hash, self.mpesa_callback_token_hash):
+            return True
+        if self.previous_callback_token_hash and hmac.compare_digest(candidate_hash, self.previous_callback_token_hash):
+            return True
+        return False
 
 
 class SubscriptionTransaction(SaasBase):
@@ -131,6 +165,9 @@ class CustomerPayment(SaasBase, TenantScopedModel):
     by the individual tenant via their own M-Pesa / Paystack.
     """
     __tablename__ = "saas_customer_payments"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "checkout_request_id", name="uq_customer_payment_tenant_checkout_id"),
+    )
 
     customer_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("saas_pppoe_customers.id", ondelete="SET NULL"), nullable=True, index=True
@@ -146,7 +183,8 @@ class CustomerPayment(SaasBase, TenantScopedModel):
     )
     gateway: Mapped[str] = mapped_column(String(32), default="mpesa")  # "mpesa", "paystack", "cash"
     reference: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
-    provider_reference: Mapped[str | None] = mapped_column(String(128), nullable=True)  # M-Pesa Receipt or Paystack Ref
+    checkout_request_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    provider_reference: Mapped[str | None] = mapped_column(String(128), index=True, nullable=True)  # M-Pesa Receipt or Paystack Ref
     amount_kes: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     phone_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="pending", index=True)  # pending, completed, failed

@@ -15,14 +15,16 @@ from saas.models.base import TenantScopedModel
 
 if TYPE_CHECKING:
     from saas.models.deployment import HotspotDeployment
-    from saas.models.router import Router
+    from saas.models.router import Router, RouterCommand
 
 
 class VoucherStatus(str, enum.Enum):
     unused = "unused"
+    pending_provisioning = "pending_provisioning"
     active = "active"
     used = "used"
     expired = "expired"
+    provisioning_failed = "provisioning_failed"
 
 
 class HotspotPackage(SaasBase, TenantScopedModel):
@@ -54,11 +56,15 @@ class HotspotVoucher(SaasBase, TenantScopedModel):
     status: Mapped[VoucherStatus] = mapped_column(Enum(VoucherStatus), default=VoucherStatus.unused, index=True)
     batch_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     customer_payment_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    router_command_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("saas_router_commands.id", use_alter=True, ondelete="SET NULL"), nullable=True, index=True
+    )
     
     first_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     package: Mapped["HotspotPackage"] = relationship(back_populates="vouchers")
+    router_command: Mapped["RouterCommand | None"] = relationship(foreign_keys=[router_command_id])
 
 
 class HotspotPortalDesign(SaasBase, TenantScopedModel):

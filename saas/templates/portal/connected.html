@@ -127,7 +127,12 @@
   <div class="voucher-box">
     <div class="voucher-label">Your Active Voucher Code</div>
     <div class="voucher-code">{{ voucher.code }}</div>
-    <small style="color: var(--text-muted); font-size: 11px;">Keep this code in case you disconnect and need to reconnect.</small>
+    <div style="margin: 8px 0;">
+      <button type="button" onclick="navigator.clipboard.writeText('{{ voucher.code }}'); this.textContent = '✓ Copied!'; var btn=this; setTimeout(function(){ btn.textContent = '📋 Copy Code'; }, 2000);" style="background: rgba(223,183,88,0.15); border: 1px solid var(--border-gold); color: var(--gold); border-radius: 6px; padding: 6px 14px; font-size: 12px; font-weight: 600; cursor: pointer;">
+        📋 Copy Code
+      </button>
+    </div>
+    <small style="color: var(--text-muted); font-size: 11px;">Keep this code in case your device disconnects.</small>
   </div>
   {% endif %}
 

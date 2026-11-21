@@ -2127,6 +2127,21 @@ async def router_ack_endpoint(
             cmd.status = RouterCommandStatus.done
             cmd.finished_at = now_ts
 
+            # Promote associated hotspot vouchers from pending_provisioning to active
+            vouchers = db.scalars(
+                select(HotspotVoucher).where(
+                    or_(
+                        HotspotVoucher.router_command_id == cmd.id,
+                        HotspotVoucher.id == cmd.voucher_id,
+                    ),
+                    HotspotVoucher.tenant_id == router.tenant_id,
+                )
+            ).all()
+            for v in vouchers:
+                v.status = VoucherStatus.active
+                if not v.first_used_at:
+                    v.first_used_at = now_ts
+
     if failed_ids:
         cmds_failed = db.scalars(
             select(RouterCommand).where(
@@ -2138,6 +2153,19 @@ async def router_ack_endpoint(
         for cmd in cmds_failed:
             cmd.status = RouterCommandStatus.failed
             cmd.finished_at = now_ts
+
+            # Transition associated vouchers to provisioning_failed
+            vouchers = db.scalars(
+                select(HotspotVoucher).where(
+                    or_(
+                        HotspotVoucher.router_command_id == cmd.id,
+                        HotspotVoucher.id == cmd.voucher_id,
+                    ),
+                    HotspotVoucher.tenant_id == router.tenant_id,
+                )
+            ).all()
+            for v in vouchers:
+                v.status = VoucherStatus.provisioning_failed
 
     db.commit()
     return {"status": "recorded", "acknowledged_ok": len(ok_ids), "acknowledged_failed": len(failed_ids)}

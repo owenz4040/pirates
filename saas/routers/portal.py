@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import urllib.parse
 from decimal import Decimal
 from typing import Any
 
@@ -45,6 +46,56 @@ class PurchaseRequest(BaseModel):
     link_login_only: str | None = None
 
 
+def validate_captive_login_url(url_str: str | None, network: HotspotNetwork | None, router: Router | None = None) -> str | None:
+    """Strictly validates captive portal login URL against the selected HotspotNetwork configuration.
+
+    Guarantees:
+    - Parses URL using urllib.parse.
+    - Rejects credentials embedded in URL (user:pass).
+    - Rejects fragments (#).
+    - Rejects external hosts, arbitrary domains, and unlisted subnets.
+    - Destination hostname MUST match HotspotNetwork.gateway_ip, HotspotNetwork.dns_name, or router.ip_address.
+    - Path must be standard RouterOS login path (/login or /login/).
+    - Returns None if invalid or untrusted.
+    """
+    if not url_str or not isinstance(url_str, str):
+        return None
+    url_clean = url_str.strip()
+    try:
+        parsed = urllib.parse.urlparse(url_clean)
+    except Exception:
+        return None
+
+    if parsed.scheme not in ("http", "https"):
+        return None
+    if parsed.username or parsed.password:
+        return None
+    if parsed.fragment:
+        return None
+
+    hostname = (parsed.hostname or "").lower().strip()
+    if not hostname:
+        return None
+
+    allowed_destinations = set()
+    if network:
+        if network.gateway_ip:
+            allowed_destinations.add(network.gateway_ip.lower().strip())
+        if network.dns_name:
+            allowed_destinations.add(network.dns_name.lower().strip())
+    if router and router.ip_address:
+        allowed_destinations.add(router.ip_address.lower().strip())
+
+    if not allowed_destinations or hostname not in allowed_destinations:
+        return None
+
+    clean_path = parsed.path.rstrip("/")
+    if clean_path not in ("/login", ""):
+        return None
+
+    return url_clean
+
+
 @portal_router.get("/portal", response_class=HTMLResponse)
 @portal_router.get("/portal/{tenant_slug}", response_class=HTMLResponse)
 def customer_portal_page(
@@ -61,24 +112,42 @@ def customer_portal_page(
 ):
     """Customer-facing mobile-first captive portal."""
     effective_slug = tenant_slug or tenant
-    target_tenant: Tenant | None = None
-
-    if effective_slug:
-        target_tenant = db.scalar(
-            select(Tenant).where(Tenant.slug == effective_slug.strip(), Tenant.status == TenantStatus.active)
+    if not effective_slug or not effective_slug.strip():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Hotspot network identifier required.",
         )
 
-    # If no slug provided or not found, fallback to first active tenant
+    target_tenant = db.scalar(
+        select(Tenant).where(Tenant.slug == effective_slug.strip(), Tenant.status == TenantStatus.active)
+    )
     if not target_tenant:
-        target_tenant = db.scalar(
-            select(Tenant).where(Tenant.status == TenantStatus.active).order_by(Tenant.created_at.asc())
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Hotspot network not found or inactive.",
         )
 
-    if not target_tenant:
-        return HTMLResponse(
-            "<h3>Hotspot Portal Offline</h3><p>No active network operator configured.</p>",
-            status_code=503,
+    # Hotspot network details (SSID)
+    network: HotspotNetwork | None = None
+    target_router: Router | None = None
+    if router:
+        network = db.scalar(
+            select(HotspotNetwork).where(HotspotNetwork.tenant_id == target_tenant.id, HotspotNetwork.router_id == router)
         )
+        target_router = db.scalar(
+            select(Router).where(Router.tenant_id == target_tenant.id, Router.id == router)
+        )
+    if not network:
+        network = db.scalar(
+            select(HotspotNetwork).where(HotspotNetwork.tenant_id == target_tenant.id).order_by(HotspotNetwork.created_at.desc())
+        )
+    if not target_router and network and network.router_id:
+        target_router = db.scalar(
+            select(Router).where(Router.tenant_id == target_tenant.id, Router.id == network.router_id)
+        )
+
+    # Validate client-supplied link_login_only strictly against router / network gateway
+    validated_login_url = validate_captive_login_url(link_login_only, network, target_router)
 
     # Tenant branding & portal design
     branding = db.scalar(select(TenantBranding).where(TenantBranding.tenant_id == target_tenant.id))
@@ -91,17 +160,6 @@ def customer_portal_page(
         .where(HotspotPackage.tenant_id == target_tenant.id, HotspotPackage.is_active == True)
         .order_by(HotspotPackage.price_kes.asc())
     ).all()
-
-    # Hotspot network details (SSID)
-    network: HotspotNetwork | None = None
-    if router:
-        network = db.scalar(
-            select(HotspotNetwork).where(HotspotNetwork.tenant_id == target_tenant.id, HotspotNetwork.router_id == router)
-        )
-    if not network:
-        network = db.scalar(
-            select(HotspotNetwork).where(HotspotNetwork.tenant_id == target_tenant.id).order_by(HotspotNetwork.created_at.desc())
-        )
 
     brand_name = (design.brand_name if design else None) or (branding.company_title if branding else None) or target_tenant.name
     ssid_name = network.ssid if network else "High-Speed WiFi"
@@ -126,7 +184,7 @@ def customer_portal_page(
             "router_id": router or "",
             "client_mac": mac or "",
             "client_ip": ip or "",
-            "link_login_only": link_login_only or "http://10.5.50.1/login",
+            "link_login_only": validated_login_url or "",
             "link_orig": link_orig or "https://google.com",
             "error_msg": error,
         },
@@ -166,10 +224,11 @@ def portal_purchase_endpoint(
 @portal_router.get("/api/portal/payment-status")
 def portal_payment_status_endpoint(
     reference: str = Query(...),
+    tenant_slug: str | None = Query(None),
     db: Session = Depends(get_saas_db),
 ):
-    """Polls real-time payment confirmation status and returns generated voucher credentials."""
-    status_data = get_hotspot_payment_status(db, reference.strip())
+    """Polls real-time payment confirmation status and returns generated voucher credentials ONLY after router acknowledgement."""
+    status_data = get_hotspot_payment_status(db, reference.strip(), tenant_slug=tenant_slug)
     return JSONResponse(content=status_data)
 
 
@@ -192,16 +251,25 @@ def portal_paystack_callback(
     try:
         verification = verify_transaction(clean_ref, secret_key=secret_key)
         if verification.get("status") == "success":
-            complete_hotspot_payment(
-                db,
-                reference=clean_ref,
-                gateway="paystack",
-                provider_data=verification,
-            )
-            return RedirectResponse(
-                url=f"/portal/connected?reference={clean_ref}",
-                status_code=status.HTTP_303_SEE_OTHER,
-            )
+            v_data = verification.get("data", {})
+            v_curr = str(v_data.get("currency", "")).upper()
+            v_amt = Decimal(str(v_data.get("amount", 0))) / Decimal(100)
+            if v_curr == "KES" and v_amt == payment.amount_kes:
+                complete_hotspot_payment(
+                    db,
+                    reference=clean_ref,
+                    tenant_id=payment.tenant_id,
+                    gateway="paystack",
+                    provider_data=verification,
+                    receipt_number=str(v_data.get("id", clean_ref)),
+                    verified_amount_kes=payment.amount_kes,
+                )
+                return RedirectResponse(
+                    url=f"/portal/connected?reference={clean_ref}",
+                    status_code=status.HTTP_303_SEE_OTHER,
+                )
+            else:
+                logger.error("Paystack callback amount or currency mismatch for ref %s", clean_ref)
     except Exception as exc:
         logger.warning("Paystack callback verification failed for reference %s: %s", clean_ref, exc)
 
@@ -242,7 +310,7 @@ def portal_connected_page(
             "tenant": tenant,
             "package": package,
             "brand_name": brand_name,
-            "link_login_only": payment.link_login_only or "http://10.5.50.1/login",
+            "link_login_only": payment.link_login_only or "",
         },
     )
 
@@ -255,12 +323,18 @@ def portal_connected_page(
 async def mpesa_tenant_webhook(
     request: Request,
     tenant_id: str,
+    token: str | None = Query(None),
     db: Session = Depends(get_saas_db),
 ):
-    """Handles Safaricom Daraja STK Push callbacks for tenant ISP voucher payments."""
+    """Handles Safaricom Daraja STK Push callbacks with secure token and amount verification."""
     tenant = db.scalar(select(Tenant).where(Tenant.id == tenant_id))
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found.")
+
+    payment_config = db.scalar(select(TenantPaymentConfig).where(TenantPaymentConfig.tenant_id == tenant_id))
+    if not payment_config or not payment_config.verify_callback_token(token):
+        logger.warning("Rejected unauthorized M-Pesa callback for tenant %s: token mismatch or absent", tenant_id)
+        return JSONResponse(status_code=401, content={"ResultCode": 1, "ResultDesc": "Unauthorized callback token"})
 
     try:
         body_bytes = await request.body()
@@ -271,40 +345,79 @@ async def mpesa_tenant_webhook(
 
     parsed = parse_stk_callback(payload)
     checkout_id = parsed.get("checkout_request_id")
-
     if not checkout_id:
         logger.warning("M-Pesa callback missing CheckoutRequestID for tenant %s", tenant_id)
         return JSONResponse(content={"ResultCode": 0, "ResultDesc": "Accepted"})
 
-    # Find matching CustomerPayment by checkout_request_id in metadata
-    payments = db.scalars(
+    # Correlate using exact indexed checkout_request_id scoped to tenant
+    target_payment = db.scalar(
         select(CustomerPayment).where(
             CustomerPayment.tenant_id == tenant_id,
+            CustomerPayment.checkout_request_id == checkout_id,
             CustomerPayment.gateway == "mpesa",
-            CustomerPayment.status == "pending",
         )
-    ).all()
+    )
 
-    target_payment: CustomerPayment | None = None
-    for p in payments:
-        if p.metadata_json and checkout_id in p.metadata_json:
-            target_payment = p
-            break
+    if not target_payment:
+        logger.warning("M-Pesa callback checkout_request_id '%s' not found for tenant %s", checkout_id, tenant_id)
+        return JSONResponse(content={"ResultCode": 0, "ResultDesc": "Accepted"})
 
-    if target_payment:
-        if parsed.get("is_success"):
-            complete_hotspot_payment(
-                db,
-                reference=target_payment.reference,
-                gateway="mpesa",
-                provider_data=payload,
-                receipt_number=parsed.get("receipt_number"),
+    if parsed.get("is_success"):
+        # Validate amount
+        paid_amount = parsed.get("amount")
+        if paid_amount is None or Decimal(str(paid_amount)) != target_payment.amount_kes:
+            logger.error(
+                "M-Pesa amount mismatch for ref %s: expected %s, got %s",
+                target_payment.reference,
+                target_payment.amount_kes,
+                paid_amount,
             )
-            logger.info("M-Pesa payment confirmed for reference %s (Receipt: %s)", target_payment.reference, parsed.get("receipt_number"))
-        else:
             target_payment.status = "failed"
             db.commit()
-            logger.warning("M-Pesa payment failed for reference %s: %s", target_payment.reference, parsed.get("result_desc"))
+            return JSONResponse(content={"ResultCode": 0, "ResultDesc": "Amount mismatch recorded"})
+
+        # Validate receipt uniqueness
+        receipt_no = parsed.get("receipt_number")
+        if not receipt_no or not receipt_no.strip():
+            logger.error("M-Pesa callback missing receipt number for ref %s", target_payment.reference)
+            target_payment.status = "failed"
+            db.commit()
+            return JSONResponse(content={"ResultCode": 0, "ResultDesc": "Missing receipt"})
+
+        # Check for duplicate receipt on another payment
+        existing_receipt = db.scalar(
+            select(CustomerPayment).where(
+                CustomerPayment.tenant_id == tenant_id,
+                CustomerPayment.provider_reference == receipt_no.strip(),
+                CustomerPayment.id != target_payment.id,
+            )
+        )
+        if existing_receipt:
+            logger.error(
+                "Duplicate M-Pesa receipt '%s' detected on payment %s (original %s)",
+                receipt_no,
+                target_payment.reference,
+                existing_receipt.reference,
+            )
+            target_payment.status = "failed"
+            db.commit()
+            return JSONResponse(content={"ResultCode": 0, "ResultDesc": "Duplicate receipt rejected"})
+
+        # Finalize payment and queue router command with voucher in pending_provisioning
+        complete_hotspot_payment(
+            db,
+            reference=target_payment.reference,
+            tenant_id=tenant_id,
+            gateway="mpesa",
+            provider_data=payload,
+            receipt_number=receipt_no.strip(),
+            verified_amount_kes=target_payment.amount_kes,
+        )
+        logger.info("M-Pesa payment confirmed for ref %s (Receipt: %s)", target_payment.reference, receipt_no)
+    else:
+        target_payment.status = "failed"
+        db.commit()
+        logger.warning("M-Pesa payment failed for ref %s: %s", target_payment.reference, parsed.get("result_desc"))
 
     return JSONResponse(content={"ResultCode": 0, "ResultDesc": "Accepted"})
 
@@ -316,7 +429,7 @@ async def paystack_tenant_webhook(
     x_paystack_signature: str = Header(None, alias="x-paystack-signature"),
     db: Session = Depends(get_saas_db),
 ):
-    """Handles Paystack webhooks for customer payments using tenant's encrypted secret key."""
+    """Handles Paystack webhooks for customer payments using tenant's encrypted secret key with strict isolation."""
     tenant = db.scalar(select(Tenant).where(Tenant.id == tenant_id))
     payment_config = db.scalar(select(TenantPaymentConfig).where(TenantPaymentConfig.tenant_id == tenant_id))
 
@@ -340,11 +453,42 @@ async def paystack_tenant_webhook(
         data = event.get("data", {})
         reference = data.get("reference")
         if reference:
+            payment = db.scalar(
+                select(CustomerPayment).where(
+                    CustomerPayment.reference == reference,
+                    CustomerPayment.tenant_id == tenant_id,
+                )
+            )
+            if not payment:
+                logger.warning("Paystack webhook reference %s not found for tenant %s", reference, tenant_id)
+                return JSONResponse(content={"status": "ignored", "reason": "Unknown reference for tenant"})
+
+            # Verify currency
+            currency = str(data.get("currency", "")).upper()
+            if currency != "KES":
+                logger.error("Paystack currency mismatch for ref %s: expected KES, got %s", reference, currency)
+                payment.status = "failed"
+                db.commit()
+                return JSONResponse(content={"status": "error", "message": "Currency mismatch"})
+
+            # Verify amount (Paystack amount is in kobo/cents: divide by 100)
+            raw_amount = data.get("amount")
+            if raw_amount is not None:
+                paid_kes = Decimal(str(raw_amount)) / Decimal(100)
+                if paid_kes != payment.amount_kes:
+                    logger.error("Paystack amount mismatch for ref %s: expected %s, got %s", reference, payment.amount_kes, paid_kes)
+                    payment.status = "failed"
+                    db.commit()
+                    return JSONResponse(content={"status": "error", "message": "Amount mismatch"})
+
             complete_hotspot_payment(
                 db,
                 reference=reference,
+                tenant_id=tenant_id,
                 gateway="paystack",
                 provider_data=data,
+                receipt_number=str(data.get("id", reference)),
+                verified_amount_kes=payment.amount_kes,
             )
 
     return JSONResponse(content={"status": "ok"})

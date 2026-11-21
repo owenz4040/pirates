@@ -415,15 +415,15 @@
     <!-- Waiting for STK / Confirmation View -->
     <div id="modalWaitingView" class="waiting-box">
       <div class="spinner"></div>
-      <h3 style="color: #fff; font-size: 18px; margin-bottom: 8px;">Waiting for M-Pesa Payment</h3>
-      <p style="color: var(--text-muted); font-size: 13px; line-height: 1.5; margin-bottom: 16px;">
+      <h3 style="color: #fff; font-size: 18px; margin-bottom: 8px;" id="waitingTitle">Payment Confirmation</h3>
+      <p style="color: var(--text-muted); font-size: 13px; line-height: 1.5; margin-bottom: 16px;" id="waitingStatusText">
         Please check your phone and enter your M-Pesa PIN to complete payment.
       </p>
       <div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--gold); padding: 8px; background: rgba(223,183,88,0.1); border-radius: 6px;" id="waitingRefDisplay">
         Ref: HPAY-...
       </div>
       <div style="font-size: 11px; color: var(--text-muted); margin-top: 14px;">
-        Checking confirmation automatically every 2 seconds...
+        Checking confirmation and router synchronization automatically...
       </div>
     </div>
 
@@ -549,23 +549,26 @@
 
     pollInterval = setInterval(function() {
       attempts++;
-      if (attempts > 60) { // 2 minutes max
+      if (attempts > 90) { // 3 minutes max
         clearInterval(pollInterval);
-        alert('Payment confirmation timed out. If you completed M-Pesa payment, click "Enter Voucher Code" and use your reference.');
+        alert('Payment or provisioning timed out. Please check your connection status with reference: ' + reference);
         closeModal();
         return;
       }
 
-      fetch('/api/portal/payment-status?reference=' + encodeURIComponent(reference))
+      fetch('/api/portal/payment-status?reference=' + encodeURIComponent(reference) + '&tenant_slug=' + encodeURIComponent(currentTenantSlug))
         .then(function(res) { return res.json(); })
         .then(function(data) {
-          if (data.status === 'completed' && data.voucher_code) {
+          if (data.status === 'provisioning') {
+            document.getElementById('waitingTitle').textContent = 'Preparing Your Connection';
+            document.getElementById('waitingStatusText').textContent = data.message || 'Payment received. Preparing your high-speed internet access on the router...';
+          } else if (data.status === 'completed' && data.voucher_code) {
             clearInterval(pollInterval);
-            // Automatic Login Execution: submit to MikroTik Hotspot
-            performAutoLogin(data.voucher_code, data.voucher_password || data.voucher_code, data.link_login_only);
+            // Automatic Login Execution: submit to MikroTik Hotspot or redirect to voucher screen
+            performAutoLogin(data.voucher_code, data.voucher_password || data.voucher_code, data.link_login_only, reference);
           } else if (data.status === 'failed') {
             clearInterval(pollInterval);
-            alert('M-Pesa payment was cancelled or failed.');
+            alert(data.message || 'Payment or router provisioning failed.');
             closeModal();
           }
         })
@@ -575,21 +578,25 @@
     }, 2000);
   }
 
-  function performAutoLogin(code, pass, linkUrl) {
+  function performAutoLogin(code, pass, linkUrl, ref) {
     // 1. Fill auto-login form
     document.getElementById('auto_user').value = code;
     document.getElementById('auto_pass').value = pass;
-    if (linkUrl) {
-      document.getElementById('autoLoginForm').action = linkUrl;
+
+    if (linkUrl && linkUrl.trim()) {
+      document.getElementById('autoLoginForm').action = linkUrl.trim();
+      try {
+        document.getElementById('autoLoginForm').submit();
+      } catch (e) {
+        console.warn('Form submit error:', e);
+      }
+      setTimeout(function() {
+        window.location.href = '/portal/connected?reference=' + encodeURIComponent(ref || code);
+      }, 1500);
+    } else {
+      // If no trusted router login endpoint is available, show confirmed voucher screen directly
+      window.location.href = '/portal/connected?reference=' + encodeURIComponent(ref || code);
     }
-
-    // 2. Submit form immediately to MikroTik Hotspot link-login-only
-    document.getElementById('autoLoginForm').submit();
-
-    // 3. Fallback redirect to connected page after short delay if form post does not navigate
-    setTimeout(function() {
-      window.location.href = '/portal/connected?reference=' + encodeURIComponent(code);
-    }, 1500);
   }
 </script>
 

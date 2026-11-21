@@ -130,7 +130,8 @@ def initiate_hotspot_purchase(
             raise HotspotBillingError("Phone number is required for M-Pesa STK Push.")
 
         formatted_phone = format_phone_number(customer_phone)
-        callback_url = f"{base_url}/api/webhook/mpesa/{tenant.id}"
+        callback_token = payment_config.get_callback_token()
+        callback_url = f"{base_url}/api/webhook/mpesa/{tenant.id}?token={callback_token}"
         is_till = (payment_config.mpesa_type == "till")
 
         stk_res = initiate_stk_push(
@@ -146,8 +147,10 @@ def initiate_hotspot_purchase(
             is_till=is_till,
         )
 
+        checkout_req_id = stk_res.get("checkout_request_id")
+        payment.checkout_request_id = checkout_req_id
         payment.metadata_json = json.dumps({
-            "checkout_request_id": stk_res.get("checkout_request_id"),
+            "checkout_request_id": checkout_req_id,
             "merchant_request_id": stk_res.get("merchant_request_id"),
             "customer_phone": formatted_phone,
         })
@@ -207,30 +210,43 @@ def complete_hotspot_payment(
     db: Session,
     *,
     reference: str,
+    tenant_id: str,
     gateway: str,
     provider_data: dict[str, Any] | None = None,
     receipt_number: str | None = None,
+    verified_amount_kes: Decimal | None = None,
 ) -> dict[str, Any]:
-    """Idempotently finalizes payment, creates voucher, and queues MikroTik user provisioning."""
+    """Idempotently finalizes payment, creates voucher in pending_provisioning, and queues MikroTik user provisioning."""
+    # Enforce strict tenant isolation on customer payment lookup
     payment = db.scalar(
-        select(CustomerPayment).where(CustomerPayment.reference == reference)
+        select(CustomerPayment).where(
+            CustomerPayment.reference == reference,
+            CustomerPayment.tenant_id == tenant_id,
+        )
     )
     if not payment:
-        raise HotspotBillingError(f"Customer payment reference '{reference}' not found.")
+        raise HotspotBillingError(f"Customer payment reference '{reference}' not found for tenant '{tenant_id}'.")
 
-    # Idempotency guard: If already completed, return existing voucher activation details
-    if payment.status == "completed" and payment.voucher_id:
+    # Amount validation: Reject if verified amount does not match package amount
+    if verified_amount_kes is not None and verified_amount_kes != payment.amount_kes:
+        payment.status = "failed"
+        db.commit()
+        raise HotspotBillingError(f"Payment amount mismatch: expected {payment.amount_kes}, received {verified_amount_kes}.")
+
+    # Idempotency guard: If already completed, check voucher provisioning state
+    if payment.status in ("completed", "paid") and payment.voucher_id:
         voucher = db.scalar(select(HotspotVoucher).where(HotspotVoucher.id == payment.voucher_id))
         if voucher:
+            is_active = (voucher.status == VoucherStatus.active)
             return {
-                "status": "completed",
+                "status": "completed" if is_active else "provisioning",
                 "reference": reference,
-                "voucher_code": voucher.code,
-                "voucher_password": voucher.password or voucher.code,
+                "voucher_code": voucher.code if is_active else None,
+                "voucher_password": (voucher.password or voucher.code) if is_active else None,
                 "link_login_only": payment.link_login_only,
                 "client_mac": payment.client_mac,
                 "client_ip": payment.client_ip,
-                "message": "Payment already confirmed and activated.",
+                "message": "Payment verified." if not is_active else "Payment confirmed and active.",
             }
 
     tenant = db.scalar(select(Tenant).where(Tenant.id == payment.tenant_id))
@@ -238,7 +254,7 @@ def complete_hotspot_payment(
     if not tenant or not package:
         raise HotspotBillingError("Associated tenant or package no longer exists.")
 
-    # Mark as completed
+    # Mark payment as completed / paid
     payment.status = "completed"
     payment.paid_at = datetime.now(timezone.utc)
 
@@ -258,7 +274,7 @@ def complete_hotspot_payment(
         meta["provider_data"] = provider_data
     payment.metadata_json = json.dumps(meta)
 
-    # Generate cryptographically secure voucher
+    # Generate cryptographically secure voucher in pending_provisioning status
     voucher_code = generate_secure_voucher_code(8)
     voucher_duration = package.duration_minutes
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=voucher_duration)
@@ -269,9 +285,9 @@ def complete_hotspot_payment(
         router_id=payment.router_id,
         code=voucher_code,
         password=voucher_code,
-        status=VoucherStatus.active,
+        status=VoucherStatus.pending_provisioning,
         customer_payment_id=payment.id,
-        first_used_at=datetime.now(timezone.utc),
+        first_used_at=None,
         expires_at=expires_at,
     )
     db.add(voucher)
@@ -304,50 +320,98 @@ def complete_hotspot_payment(
             description=f"Provision Hotspot Voucher: {voucher_code} ({package.name})",
             script=combined_script,
             status=RouterCommandStatus.pending,
+            voucher_id=voucher.id,
         )
         db.add(cmd)
+        db.flush()
+        voucher.router_command_id = cmd.id
 
     db.commit()
 
     return {
-        "status": "completed",
+        "status": "provisioning",
         "reference": reference,
-        "voucher_code": voucher_code,
-        "voucher_password": voucher_code,
+        "voucher_code": None,  # Not revealed while pending router acknowledgement
         "package_name": package.name,
         "duration_minutes": voucher_duration,
         "rate_limit": package.rate_limit,
         "link_login_only": payment.link_login_only,
         "client_mac": payment.client_mac,
         "client_ip": payment.client_ip,
-        "message": "Payment verified and voucher provisioned.",
+        "message": "Payment verified. Provisioning queued on router.",
     }
 
 
-def get_hotspot_payment_status(db: Session, reference: str) -> dict[str, Any]:
-    """Queries payment status and returns voucher credentials if completed."""
-    payment = db.scalar(
-        select(CustomerPayment).where(CustomerPayment.reference == reference)
-    )
+def get_hotspot_payment_status(db: Session, reference: str, tenant_slug: str | None = None) -> dict[str, Any]:
+    """Queries payment status and returns voucher credentials ONLY after router acknowledgement."""
+    query = select(CustomerPayment).where(CustomerPayment.reference == reference)
+    if tenant_slug:
+        tenant = db.scalar(select(Tenant).where(Tenant.slug == tenant_slug.strip()))
+        if tenant:
+            query = query.where(CustomerPayment.tenant_id == tenant.id)
+
+    payment = db.scalar(query)
     if not payment:
         return {"status": "not_found", "message": "Transaction not found."}
 
-    if payment.status == "completed" and payment.voucher_id:
+    if payment.status in ("completed", "paid") and payment.voucher_id:
         voucher = db.scalar(select(HotspotVoucher).where(HotspotVoucher.id == payment.voucher_id))
         package = db.scalar(select(HotspotPackage).where(HotspotPackage.id == payment.package_id))
-        return {
-            "status": "completed",
-            "reference": reference,
-            "voucher_code": voucher.code if voucher else None,
-            "voucher_password": voucher.password or (voucher.code if voucher else None),
-            "package_name": package.name if package else "WiFi Access",
-            "duration_minutes": package.duration_minutes if package else 60,
-            "rate_limit": package.rate_limit if package else "5M/10M",
-            "link_login_only": payment.link_login_only,
-            "client_mac": payment.client_mac,
-            "client_ip": payment.client_ip,
-        }
-    elif payment.status == "failed":
+        
+        if not voucher:
+            return {"status": "provisioning", "reference": reference, "message": "Generating access credentials..."}
+
+        # Stage 1: Router provisioning in progress
+        if voucher.status == VoucherStatus.pending_provisioning:
+            # Check if router command has definitively failed
+            if voucher.router_command_id:
+                cmd = db.scalar(select(RouterCommand).where(RouterCommand.id == voucher.router_command_id))
+                if cmd and cmd.status == RouterCommandStatus.failed:
+                    voucher.status = VoucherStatus.provisioning_failed
+                    db.commit()
+                    return {
+                        "status": "failed",
+                        "reference": reference,
+                        "message": "Router provisioning failed. Please contact your network operator.",
+                    }
+
+            return {
+                "status": "provisioning",
+                "reference": reference,
+                "message": "Payment received. Your internet access is being prepared. Please wait while we connect you.",
+                "package_name": package.name if package else "WiFi Access",
+            }
+
+        # Stage 2: Router confirmed creation (ACK received)
+        if voucher.status == VoucherStatus.active:
+            return {
+                "status": "completed",
+                "reference": reference,
+                "voucher_code": voucher.code,
+                "voucher_password": voucher.password or voucher.code,
+                "package_name": package.name if package else "WiFi Access",
+                "duration_minutes": package.duration_minutes if package else 60,
+                "rate_limit": package.rate_limit if package else "5M/10M",
+                "link_login_only": payment.link_login_only,
+                "client_mac": payment.client_mac,
+                "client_ip": payment.client_ip,
+            }
+
+        if voucher.status == VoucherStatus.provisioning_failed:
+            return {
+                "status": "failed",
+                "reference": reference,
+                "message": "Router provisioning failed. Please contact your network operator.",
+            }
+
+        if voucher.status == VoucherStatus.expired:
+            return {
+                "status": "expired",
+                "reference": reference,
+                "message": "This access voucher has expired.",
+            }
+
+    if payment.status == "failed":
         return {"status": "failed", "reference": reference, "message": "Payment was declined or failed."}
-    else:
-        return {"status": "pending", "reference": reference, "message": "Awaiting payment confirmation."}
+
+    return {"status": "awaiting_payment", "reference": reference, "message": "Awaiting payment confirmation."}

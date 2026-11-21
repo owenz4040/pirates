@@ -59,6 +59,9 @@ class RouterCommand(SaasBase, TenantScopedModel):
     __tablename__ = "saas_router_commands"
 
     router_id: Mapped[str] = mapped_column(String(36), ForeignKey("saas_routers.id", ondelete="CASCADE"), index=True)
+    voucher_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("saas_hotspot_vouchers.id", use_alter=True, ondelete="SET NULL"), nullable=True, index=True
+    )
     description: Mapped[str] = mapped_column(String(255), nullable=False)
     script: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[RouterCommandStatus] = mapped_column(
