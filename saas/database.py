@@ -15,7 +15,7 @@ class SaasBase(DeclarativeBase):
     pass
 
 
-db_url = getattr(saas_settings, "effective_database_url", saas_settings.saas_database_url)
+db_url = getattr(saas_settings, "effective_database_url", saas_settings.saas_database_url).strip().strip("'\"")
 if db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql+psycopg://", 1)
 elif db_url.startswith("postgresql://") and not db_url.startswith("postgresql+"):
