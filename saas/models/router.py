@@ -4,12 +4,16 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from saas.database import SaasBase
 from saas.models.base import TenantScopedModel
+
+if TYPE_CHECKING:
+    from saas.models.tenant import Tenant
 
 
 class RouterStatus(str, enum.Enum):

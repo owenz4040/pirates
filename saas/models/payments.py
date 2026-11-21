@@ -5,6 +5,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -13,6 +14,9 @@ from saas.database import SaasBase
 from saas.models.base import TenantScopedModel
 from saas.models.tenant import SubscriptionTier
 from saas.security.crypto import decrypt_secret, encrypt_secret
+
+if TYPE_CHECKING:
+    from saas.models.tenant import Tenant
 
 
 class TenantPaymentConfig(SaasBase):
