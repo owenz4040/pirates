@@ -1,0 +1,721 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+  /* Hero Section */
+  .hero {
+    padding: 80px 0 60px;
+    text-align: center;
+    position: relative;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    background: rgba(223, 183, 88, 0.1);
+    border: 1px solid var(--border-gold);
+    border-radius: 999px;
+    color: var(--gold);
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 24px;
+  }
+  .badge-pulse {
+    width: 8px;
+    height: 8px;
+    background: var(--gold);
+    border-radius: 50%;
+    box-shadow: 0 0 10px var(--gold);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.85); }
+  }
+  .hero-title {
+    font-size: clamp(38px, 6vw, 64px);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+    max-width: 900px;
+    margin: 0 auto 24px;
+    color: #fff;
+  }
+  .hero-title span {
+    background: linear-gradient(135deg, #fff 30%, var(--gold) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .hero-subtitle {
+    font-size: clamp(17px, 2.5vw, 20px);
+    color: var(--text-muted);
+    max-width: 720px;
+    margin: 0 auto 36px;
+    font-weight: 400;
+  }
+  .hero-ctas {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    margin-bottom: 50px;
+  }
+  
+  /* Mockup Visual */
+  .mockup-wrapper {
+    max-width: 1000px;
+    margin: 0 auto;
+    background: linear-gradient(180deg, rgba(223, 183, 88, 0.25) 0%, rgba(18, 22, 33, 0) 100%);
+    padding: 1px;
+    border-radius: var(--radius-lg);
+    box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.8), 0 0 40px rgba(223, 183, 88, 0.1);
+  }
+  .mockup-inner {
+    background: #0d1017;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+  .mockup-header {
+    background: #141923;
+    padding: 12px 18px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .dot-red { background: #ef4444; }
+  .dot-yellow { background: #eab308; }
+  .dot-green { background: #22c55e; }
+  .mockup-title {
+    color: var(--text-dim);
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    margin-left: 12px;
+  }
+  .mockup-body {
+    padding: 28px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    text-align: left;
+  }
+  .metric-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 18px;
+  }
+  .metric-label {
+    font-size: 12px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+  }
+  .metric-value {
+    font-size: 24px;
+    font-weight: 700;
+    color: #fff;
+  }
+  .metric-tag {
+    font-size: 11px;
+    color: var(--gold);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 4px;
+  }
+
+  /* Section Common */
+  .section {
+    padding: 90px 0;
+  }
+  .section-header {
+    text-align: center;
+    max-width: 680px;
+    margin: 0 auto 50px;
+  }
+  .section-tag {
+    color: var(--gold);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-bottom: 10px;
+  }
+  .section-title {
+    font-size: clamp(28px, 4vw, 40px);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: #fff;
+    margin-bottom: 16px;
+  }
+  .section-subtitle {
+    color: var(--text-muted);
+    font-size: 16px;
+  }
+
+  /* Feature Grid */
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+  }
+  .feature-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 30px;
+    transition: var(--transition);
+    position: relative;
+  }
+  .feature-card:hover {
+    border-color: var(--border-gold);
+    background: var(--bg-card-hover);
+    transform: translateY(-4px);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+  }
+  .feature-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: var(--radius-sm);
+    background: rgba(223, 183, 88, 0.1);
+    border: 1px solid var(--border-gold);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    color: var(--gold);
+    margin-bottom: 20px;
+  }
+  .feature-card h3 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 10px;
+  }
+  .feature-card p {
+    color: var(--text-muted);
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  /* Pricing Section & Interactive Calculator */
+  .pricing-calc-box {
+    background: var(--bg-card);
+    border: 1px solid var(--border-gold);
+    border-radius: var(--radius-lg);
+    padding: 36px;
+    max-width: 800px;
+    margin: 0 auto 50px;
+    text-align: center;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+  }
+  .calc-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 20px;
+  }
+  .calc-selector {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+  .calc-btn {
+    padding: 10px 20px;
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+    transition: var(--transition);
+  }
+  .calc-btn.active, .calc-btn:hover {
+    background: var(--gold);
+    color: #090a0f;
+    border-color: var(--gold);
+  }
+  .calc-recommendation {
+    font-size: 15px;
+    color: var(--text-muted);
+  }
+  .calc-recommendation strong {
+    color: var(--gold);
+  }
+
+  .pricing-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+  }
+  .pricing-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 32px 24px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    transition: var(--transition);
+  }
+  .pricing-card:hover {
+    border-color: rgba(223, 183, 88, 0.5);
+    transform: translateY(-4px);
+  }
+  .pricing-card.featured {
+    border-color: var(--gold);
+    background: linear-gradient(180deg, rgba(223, 183, 88, 0.12) 0%, rgba(18, 22, 33, 0.8) 100%);
+    box-shadow: 0 0 30px rgba(223, 183, 88, 0.15);
+  }
+  .plan-badge {
+    position: absolute;
+    top: -12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--gold);
+    color: #090a0f;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 12px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .plan-name {
+    font-size: 20px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 8px;
+  }
+  .plan-price {
+    margin: 16px 0 20px;
+  }
+  .price-amount {
+    font-size: 32px;
+    font-weight: 800;
+    color: #fff;
+  }
+  .price-period {
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+  .plan-limit {
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--gold);
+    margin-bottom: 24px;
+    text-align: center;
+  }
+  .plan-features {
+    list-style: none;
+    margin-bottom: 30px;
+    flex: 1;
+  }
+  .plan-features li {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .plan-features li::before {
+    content: "✓";
+    color: var(--gold);
+    font-weight: 700;
+  }
+
+  /* Architecture Box */
+  .arch-box {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 40px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 40px;
+    align-items: center;
+  }
+  .arch-badge {
+    color: var(--gold);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  .arch-box h3 {
+    font-size: 26px;
+    color: #fff;
+    font-weight: 700;
+    margin-bottom: 16px;
+  }
+  .arch-box p {
+    color: var(--text-muted);
+    font-size: 15px;
+    margin-bottom: 18px;
+  }
+  .arch-code {
+    background: #07080c;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 24px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+    overflow-x: auto;
+    line-height: 1.6;
+  }
+  .arch-code span.gold { color: var(--gold); }
+  .arch-code span.blue { color: var(--blue); }
+
+  /* FAQ Accordion */
+  .faq-grid {
+    max-width: 800px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .faq-item {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 24px;
+  }
+  .faq-q {
+    font-size: 17px;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 8px;
+  }
+  .faq-a {
+    font-size: 14px;
+    color: var(--text-muted);
+    line-height: 1.6;
+  }
+
+  @media (max-width: 992px) {
+    .features-grid { grid-template-columns: repeat(2, 1fr); }
+    .pricing-grid { grid-template-columns: repeat(2, 1fr); }
+    .mockup-body { grid-template-columns: repeat(2, 1fr); }
+    .arch-box { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 600px) {
+    .features-grid { grid-template-columns: 1fr; }
+    .pricing-grid { grid-template-columns: 1fr; }
+    .mockup-body { grid-template-columns: 1fr; }
+    .hero-ctas { flex-direction: column; width: 100%; }
+    .hero-ctas .btn { width: 100%; }
+  }
+</style>
+
+<!-- Hero Section -->
+<section class="hero container">
+  <div class="badge">
+    <div class="badge-pulse"></div>
+    <span>Multi-Tenant ISP & Hotspot Billing SaaS</span>
+  </div>
+  <h1 class="hero-title">
+    Power Your Entire ISP & WiFi Business <span>From One Cloud Platform</span>
+  </h1>
+  <p class="hero-subtitle">
+    Connect MikroTik routers with one command, automate PPPoE and Hotspot subscriber billing, publish custom captive portals, and collect M-Pesa & Paystack payments with zero friction.
+  </p>
+  <div class="hero-ctas">
+    <a href="#pricing" class="btn btn-gold btn-lg">Start Free Registration &rarr;</a>
+    <a href="#features" class="btn btn-outline btn-lg">Explore All Features</a>
+  </div>
+
+  <!-- Dashboard Preview Mockup -->
+  <div class="mockup-wrapper">
+    <div class="mockup-inner">
+      <div class="mockup-header">
+        <div class="dot dot-red"></div>
+        <div class="dot dot-yellow"></div>
+        <div class="dot dot-green"></div>
+        <span class="mockup-title">COwen ISP Billing &mdash; MikroTik CCR2004 (RouterOS v7)</span>
+      </div>
+      <div class="mockup-body">
+        <div class="metric-card">
+          <div class="metric-label">Active PPPoE Subscribers</div>
+          <div class="metric-value">482</div>
+          <div class="metric-tag">&#9650; 12 new this week</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Hotspot Vouchers Today</div>
+          <div class="metric-value">1,240</div>
+          <div class="metric-tag">&#9650; KSh 38,200 collected</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Connected Routers</div>
+          <div class="metric-value">4 / 4</div>
+          <div class="metric-tag" style="color:var(--green);">&#9679; 100% Online (Pull Sync)</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Monthly Gross Revenue</div>
+          <div class="metric-value">KSh 742,000</div>
+          <div class="metric-tag">&#9650; Direct to your M-Pesa</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Features Section -->
+<section id="features" class="section container">
+  <div class="section-header">
+    <div class="section-tag">Enterprise Capabilities</div>
+    <h2 class="section-title">Built Specially for Independent ISPs & Hotspot Operators</h2>
+    <p class="section-subtitle">Everything you need to automate billing, stop revenue leakage, and delight your internet customers.</p>
+  </div>
+
+  <div class="features-grid">
+    <div class="feature-card">
+      <div class="feature-icon">&#9881;</div>
+      <h3>One-Command MikroTik Sync</h3>
+      <p>Enroll any RouterOS v6 or v7 device with a single copy-pasted terminal command. Secure pull synchronization requires no public IP, port forward, or VPN.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">&#128101;</div>
+      <h3>PPPoE & Static IP Billing</h3>
+      <p>Configure bandwidth speed packages (e.g. 10M/10M, 20M/20M). The engine automates customer provisioning, secret synchronization, and instant disconnection upon expiry.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">&#128246;</div>
+      <h3>Hotspot Voucher Engine</h3>
+      <p>Generate timed and data-capped vouchers in bulk with custom prefixes, export printable PIN cards, and track active client session durations in real time.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">&#127912;</div>
+      <h3>Visual Captive Portal Builder</h3>
+      <p>Customize captive login pages to reflect your brand. Select color palettes, upload your company logo, and write custom promotional announcement banners.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">&#128640;</div>
+      <h3>Automated Router Publishing</h3>
+      <p>Deploy portal templates straight to target MikroTik routers with staging, file checksum verification, automated backups, and instantaneous rollback.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">&#128179;</div>
+      <h3>Independent Payment Gateways</h3>
+      <p>Plug in your own Safaricom Daraja M-Pesa (Paybill/Till) and Paystack keys. All customer payments land directly in your own accounts with zero platform deductions.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">&#128274;</div>
+      <h3>Encrypted Tenant Isolation</h3>
+      <p>Strict multi-tenant architecture. Every tenant's credentials and payment secrets are symmetrically encrypted at rest with AES-256-GCM.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">&#9874;</div>
+      <h3>Multi-Router Control</h3>
+      <p>Manage multiple nodes, towers, and branch offices from a single dashboard. Assign subscribers and vouchers specifically to their local router.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">&#128200;</div>
+      <h3>Real-Time Revenue Analytics</h3>
+      <p>Track cash collections, STK Push success rates, subscriber growth, and router CPU health with automated daily financial reports.</p>
+    </div>
+  </div>
+</section>
+
+<!-- Pricing Section -->
+<section id="pricing" class="section container">
+  <div class="section-header">
+    <div class="section-tag">Transparent Subscriptions</div>
+    <h2 class="section-title">Simple Monthly Plans Based on Your Router Count</h2>
+    <p class="section-subtitle">No percentage fees on your customer revenue. Pick a package that fits your network size and upgrade anytime.</p>
+  </div>
+
+  <!-- Interactive Calculator -->
+  <div class="pricing-calc-box">
+    <div class="calc-title">How many MikroTik routers do you operate?</div>
+    <div class="calc-selector">
+      <button class="calc-btn active" onclick="selectRouters(1)">1 Router</button>
+      <button class="calc-btn" onclick="selectRouters(2)">2 Routers</button>
+      <button class="calc-btn" onclick="selectRouters(4)">4 Routers</button>
+      <button class="calc-btn" onclick="selectRouters(6)">6 Routers</button>
+    </div>
+    <div class="calc-recommendation">
+      Recommended tier: <strong id="rec-plan">Starter (KSh 1,000 / month)</strong>
+    </div>
+  </div>
+
+  <div class="pricing-grid">
+    <!-- Starter -->
+    <div class="pricing-card" id="card-starter">
+      <div class="plan-name">Starter</div>
+      <p style="color:var(--text-muted); font-size:13px;">For starting WiFi zones and small residential networks.</p>
+      <div class="plan-price">
+        <span class="price-amount">KSh 1,000</span>
+        <span class="price-period">/ month</span>
+      </div>
+      <div class="plan-limit">1 MikroTik Router</div>
+      <ul class="plan-features">
+        <li>Up to 250 Active PPPoE Users</li>
+        <li>Unlimited Hotspot Vouchers</li>
+        <li>One-Command Pull Sync</li>
+        <li>Visual Captive Portal Editor</li>
+        <li>Own M-Pesa & Paystack Keys</li>
+        <li>Automated Daily Disconnections</li>
+      </ul>
+      <a href="/checkout?plan=starter" class="btn btn-outline" style="width:100%;">Select Starter</a>
+    </div>
+
+    <!-- Basic -->
+    <div class="pricing-card" id="card-basic">
+      <div class="plan-name">Basic</div>
+      <p style="color:var(--text-muted); font-size:13px;">Ideal for dual-node networks and growing estates.</p>
+      <div class="plan-price">
+        <span class="price-amount">KSh 1,500</span>
+        <span class="price-period">/ month</span>
+      </div>
+      <div class="plan-limit">2 MikroTik Routers</div>
+      <ul class="plan-features">
+        <li>Up to 750 Active PPPoE Users</li>
+        <li>Unlimited Hotspot Vouchers</li>
+        <li>Automatic Portal Deployment</li>
+        <li>Multi-Node Traffic Sync</li>
+        <li>Own M-Pesa & Paystack Keys</li>
+        <li>Priority Email Support</li>
+      </ul>
+      <a href="/checkout?plan=basic" class="btn btn-outline" style="width:100%;">Select Basic</a>
+    </div>
+
+    <!-- Growth (Featured) -->
+    <div class="pricing-card featured" id="card-growth">
+      <div class="plan-badge">Most Popular</div>
+      <div class="plan-name">Growth</div>
+      <p style="color:var(--text-muted); font-size:13px;">For multi-tower WISP operators with heavy client traffic.</p>
+      <div class="plan-price">
+        <span class="price-amount">KSh 3,500</span>
+        <span class="price-period">/ month</span>
+      </div>
+      <div class="plan-limit">4 MikroTik Routers</div>
+      <ul class="plan-features">
+        <li>Up to 2,500 PPPoE Users</li>
+        <li>Bulk Voucher Print Templates</li>
+        <li>Automated Portal Rollbacks</li>
+        <li>Static IP Management</li>
+        <li>Own M-Pesa & Paystack Keys</li>
+        <li>Sub-Administrator Accounts</li>
+      </ul>
+      <a href="/checkout?plan=growth" class="btn btn-gold" style="width:100%;">Select Growth</a>
+    </div>
+
+    <!-- Business -->
+    <div class="pricing-card" id="card-business">
+      <div class="plan-name">Business</div>
+      <p style="color:var(--text-muted); font-size:13px;">For commercial ISPs managing expansive municipal networks.</p>
+      <div class="plan-price">
+        <span class="price-amount">KSh 5,000</span>
+        <span class="price-period">/ month</span>
+      </div>
+      <div class="plan-limit">6 MikroTik Routers</div>
+      <ul class="plan-features">
+        <li>Unlimited PPPoE Subscribers</li>
+        <li>Unlimited Hotspot Vouchers</li>
+        <li>Full White-Label Branding</li>
+        <li>Custom Portal Design Versioning</li>
+        <li>Dedicated Onboarding Assistance</li>
+        <li>24/7 Priority Channel Support</li>
+      </ul>
+      <a href="/checkout?plan=business" class="btn btn-outline" style="width:100%;">Select Business</a>
+    </div>
+  </div>
+</section>
+
+<!-- Architecture Section -->
+<section id="architecture" class="section container">
+  <div class="arch-box">
+    <div>
+      <div class="arch-badge">Zero-Inbound Attack Surface</div>
+      <h3>Pull-Based Architecture Keeps Your Routers 100% Secure</h3>
+      <p>
+        Traditional billing platforms require exposing your MikroTik API port (`8728`) or SSH to the public internet, leaving your routers vulnerable to brute-force attacks.
+      </p>
+      <p>
+        COwen uses an authenticated pull-sync agent: your MikroTik fetches pending subscriber queues and captive portal updates over TLS HTTPS once every 60 seconds.
+      </p>
+      <div style="display:flex; gap:16px; margin-top:24px;">
+        <div style="font-size:13px; color:var(--gold); font-weight:600;">&#10004; No Public IP Needed</div>
+        <div style="font-size:13px; color:var(--gold); font-weight:600;">&#10004; No Port Forwarding</div>
+        <div style="font-size:13px; color:var(--gold); font-weight:600;">&#10004; Works Behind CGNAT</div>
+      </div>
+    </div>
+    <div class="arch-code">
+      <span class="blue"># 1. Enrolling your router into COwen:</span><br>
+      /system scheduler add name="cloud_sync" interval=60s on-event={<br>
+      &nbsp;&nbsp;<span class="gold">/tool fetch</span> url="https://cowen.app/api/router/sync" \<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;http-header-field="Authorization: Bearer <span class="gold">&lt;TOKEN_HASH&gt;</span>" \<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;dst-path="cloud_sync.rsc"<br>
+      &nbsp;&nbsp;/import cloud_sync.rsc<br>
+      }<br><br>
+      <span class="blue"># 2. Automated status feedback loop:</span><br>
+      Status: <span style="color:var(--green);">Connected &bull; Synchronized</span><br>
+      Uptime: 42d 18h &bull; CPU: 4% &bull; Bandwidth: 380 Mbps
+    </div>
+  </div>
+</section>
+
+<!-- FAQ Section -->
+<section id="faq" class="section container">
+  <div class="section-header">
+    <div class="section-tag">Got Questions?</div>
+    <h2 class="section-title">Frequently Asked Questions</h2>
+  </div>
+
+  <div class="faq-grid">
+    <div class="faq-item">
+      <div class="faq-q">Do I need a static public IP on my MikroTik?</div>
+      <div class="faq-a">No. Because COwen uses authenticated pull synchronization over HTTPS, your router can be behind Starlink, standard Safaricom/Airtel SIM routers, or carrier-grade NAT (CGNAT) without any special IP configurations.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">Where do customer M-Pesa payments go?</div>
+      <div class="faq-a">Directly into your own business bank or till/paybill account. You configure your own Safaricom Daraja Consumer Key, Secret, and Passkey in your tenant settings. COwen never touches your subscriber funds.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">How does subscription billing for COwen work?</div>
+      <div class="faq-a">We bill a flat monthly subscription via Paystack based on the number of MikroTik routers you manage (e.g. KSh 1,000 for 1 router up to KSh 5,000 for 6 routers). You can upgrade or cancel anytime.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">Can I build customized captive portals with my own brand?</div>
+      <div class="faq-a">Yes! Our visual hotspot builder lets you customize brand colors, logos, pricing tiers, and announcement messages, and deploys the files directly to your router with one click.</div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function selectRouters(count) {
+    document.querySelectorAll('.calc-btn').forEach(btn => btn.classList.remove('active'));
+    event.target.classList.add('active');
+
+    const rec = document.getElementById('rec-plan');
+    const cards = {
+      1: { name: 'Starter (KSh 1,000 / month)', id: 'card-starter' },
+      2: { name: 'Basic (KSh 1,500 / month)', id: 'card-basic' },
+      4: { name: 'Growth (KSh 3,500 / month)', id: 'card-growth' },
+      6: { name: 'Business (KSh 5,000 / month)', id: 'card-business' },
+    };
+
+    rec.innerText = cards[count].name;
+    document.querySelectorAll('.pricing-card').forEach(c => c.style.borderColor = 'var(--border)');
+    const activeCard = document.getElementById(cards[count].id);
+    if (activeCard) {
+      activeCard.style.borderColor = 'var(--gold)';
+    }
+  }
+</script>
+{% endblock %}

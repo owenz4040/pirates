@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+
+{% block title %}Verifying Payment — COwen{% endblock %}
+
+{% block content %}
+<style>
+  .status-container {
+    max-width: 620px;
+    margin: 80px auto;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 44px 36px;
+    text-align: center;
+    box-shadow: 0 15px 40px rgba(0,0,0,0.5);
+  }
+  .status-icon {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    margin: 0 auto 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 32px;
+  }
+  .icon-pending {
+    background: rgba(223, 183, 88, 0.15);
+    color: var(--gold);
+    border: 2px solid var(--gold);
+    animation: spin 3s linear infinite;
+  }
+  .icon-success {
+    background: rgba(74, 222, 128, 0.15);
+    color: var(--green);
+    border: 2px solid var(--green);
+  }
+  .icon-failed {
+    background: rgba(248, 113, 113, 0.15);
+    color: var(--red);
+    border: 2px solid var(--red);
+  }
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+  .status-title {
+    font-size: 24px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 12px;
+  }
+  .status-desc {
+    color: var(--text-muted);
+    font-size: 15px;
+    line-height: 1.6;
+    margin-bottom: 28px;
+  }
+  .details-box {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 18px 24px;
+    margin-bottom: 28px;
+    text-align: left;
+    font-size: 14px;
+  }
+  .details-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    color: var(--text-dim);
+  }
+  .details-row strong {
+    color: #fff;
+  }
+</style>
+
+<div class="status-container container">
+  {% if status == "provisioned" or status == "already_provisioned" %}
+    <div class="status-icon icon-success">&#10004;</div>
+    <h1 class="status-title">Payment Confirmed & Account Provisioned!</h1>
+    <p class="status-desc">
+      Your company workspace for <strong style="color:#fff;">{{ company_name }}</strong> is ready.
+      An administrator setup invitation has been sent to <strong style="color:var(--gold);">{{ admin_email }}</strong>.
+    </p>
+
+    <div class="details-box">
+      <div class="details-row"><span>Company:</span> <strong>{{ company_name }}</strong></div>
+      <div class="details-row"><span>Workspace:</span> <strong style="color:var(--gold);">{{ tenant_slug }}</strong></div>
+      <div class="details-row"><span>Reference:</span> <strong>{{ reference }}</strong></div>
+      <div class="details-row"><span>Subscription:</span> <strong>{{ tier|capitalize }} Plan</strong></div>
+    </div>
+
+    {% if invitation_url %}
+    <div style="margin-top: 24px;">
+      <a href="{{ invitation_url }}" class="btn btn-gold btn-lg" style="width: 100%;">
+        Set Up Administrator Password Now &rarr;
+      </a>
+      <p style="font-size: 12px; color: var(--text-dim); margin-top: 10px;">
+        Click above to complete your setup and open your ISP dashboard.
+      </p>
+    </div>
+    {% endif %}
+
+  {% elif status == "failed" %}
+    <div class="status-icon icon-failed">&#10006;</div>
+    <h1 class="status-title">Payment Unsuccessful</h1>
+    <p class="status-desc">
+      Paystack reported that this transaction could not be completed. Your account has not been charged.
+    </p>
+    <a href="/checkout?plan={{ tier }}" class="btn btn-gold">Try Checkout Again</a>
+
+  {% else %}
+    <div class="status-icon icon-pending">&#8635;</div>
+    <h1 class="status-title">Confirming Transaction...</h1>
+    <p class="status-desc">
+      We are securely validating your payment with Paystack's servers. This page will update automatically in a few seconds.
+    </p>
+    <div class="details-box">
+      <div class="details-row"><span>Transaction Reference:</span> <strong>{{ reference }}</strong></div>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if status == "pending" %}
+<script>
+  // Poll payment verification status every 3 seconds
+  const reference = "{{ reference }}";
+  const interval = setInterval(async () => {
+    try {
+      const resp = await fetch(`/checkout/status/${reference}/json`);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.status === "provisioned" || data.status === "already_provisioned" || data.status === "failed") {
+          window.location.reload();
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, 3000);
+</script>
+{% endif %}
+{% endblock %}

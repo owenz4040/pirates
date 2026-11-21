@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+
+{% block title %}Checkout & Company Setup — COwen{% endblock %}
+
+{% block content %}
+<style>
+  .checkout-section {
+    padding: 60px 0 80px;
+  }
+  .checkout-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.3fr;
+    gap: 40px;
+    align-items: start;
+    max-width: 1000px;
+    margin: 0 auto;
+  }
+  .summary-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-gold);
+    border-radius: var(--radius-lg);
+    padding: 32px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+    position: sticky;
+    top: 100px;
+  }
+  .summary-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 14px;
+  }
+  .summary-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    font-size: 14px;
+    color: var(--text-muted);
+  }
+  .summary-row.total {
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+    margin-top: 20px;
+    font-size: 18px;
+    font-weight: 700;
+    color: #fff;
+  }
+  .summary-badge {
+    background: rgba(223, 183, 88, 0.1);
+    color: var(--gold);
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    font-size: 13px;
+  }
+
+  .form-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 36px;
+  }
+  .form-card h2 {
+    font-size: 24px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 8px;
+  }
+  .form-card p {
+    color: var(--text-muted);
+    font-size: 14px;
+    margin-bottom: 24px;
+  }
+  .form-group {
+    margin-bottom: 20px;
+  }
+  .form-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 8px;
+  }
+  .form-input {
+    width: 100%;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: #fff;
+    font-family: inherit;
+    font-size: 14px;
+    transition: var(--transition);
+  }
+  .form-input:focus {
+    outline: none;
+    border-color: var(--gold);
+    background: rgba(255, 255, 255, 0.07);
+    box-shadow: 0 0 10px var(--gold-glow);
+  }
+  .slug-preview {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 6px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .alert-error {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: var(--red);
+    padding: 12px 16px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    margin-bottom: 20px;
+  }
+
+  @media (max-width: 800px) {
+    .checkout-grid { grid-template-columns: 1fr; }
+    .form-row { grid-template-columns: 1fr; }
+    .summary-card { position: static; }
+  }
+</style>
+
+<div class="checkout-section container">
+  <div class="checkout-grid">
+    <!-- Order Summary -->
+    <div class="summary-card">
+      <div class="summary-title">Order Summary</div>
+      <div class="summary-row">
+        <span>Selected Plan</span>
+        <span class="summary-badge">{{ tier.value|capitalize }}</span>
+      </div>
+      <div class="summary-row">
+        <span>MikroTik Router Limit</span>
+        <span style="color:#fff; font-weight:600;">{{ tier.max_routers }} Router{% if tier.max_routers > 1 %}s{% endif %}</span>
+      </div>
+      <div class="summary-row">
+        <span>Billing Cycle</span>
+        <span>Monthly Recurring</span>
+      </div>
+      <div class="summary-row">
+        <span>Hotspot Captive Portal</span>
+        <span style="color:var(--green);">Included</span>
+      </div>
+      <div class="summary-row">
+        <span>PPPoE Engine</span>
+        <span style="color:var(--green);">Included</span>
+      </div>
+      <div class="summary-row total">
+        <span>Total Due Today</span>
+        <span style="color:var(--gold);">KSh {{ "{:,.2f}".format(tier.monthly_price_kes) }}</span>
+      </div>
+      <p style="font-size:12px; color:var(--text-dim); margin-top:16px; line-height:1.5;">
+        Payments processed securely via Paystack. Funds for your subscriber payments remain strictly yours.
+      </p>
+    </div>
+
+    <!-- Registration & Checkout Form -->
+    <div class="form-card">
+      <h2>Company & Admin Registration</h2>
+      <p>Configure your new ISP billing workspace. Your activation invite will be delivered after payment confirmation.</p>
+
+      {% if error %}
+      <div class="alert-error">
+        <strong>Error:</strong> {{ error }}
+      </div>
+      {% endif %}
+
+      <form method="POST" action="/checkout/initiate" id="checkout-form">
+        <input type="hidden" name="plan" value="{{ tier.value }}">
+
+        <div class="form-group">
+          <label class="form-label" for="company_name">Company / ISP Name *</label>
+          <input type="text" id="company_name" name="company_name" class="form-input" placeholder="e.g. Skyline Fiber Networks" required value="{{ form_data.company_name if form_data else '' }}" oninput="updateSlug(this.value)">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="company_slug">Workspace Identifier / Slug *</label>
+          <input type="text" id="company_slug" name="company_slug" class="form-input" placeholder="e.g. skyline-fiber" required pattern="[a-z0-9\-]+" value="{{ form_data.company_slug if form_data else '' }}">
+          <div class="slug-preview">Tenant Workspace: https://cowen.app/<span id="slug-text" style="color:var(--gold);">skyline-fiber</span></div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="company_email">Company Support Email *</label>
+            <input type="email" id="company_email" name="company_email" class="form-input" placeholder="support@skyline.co.ke" required value="{{ form_data.company_email if form_data else '' }}">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="company_phone">Company Phone (M-Pesa) *</label>
+            <input type="tel" id="company_phone" name="company_phone" class="form-input" placeholder="+254712345678" required value="{{ form_data.company_phone if form_data else '' }}">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="admin_name">Administrator Full Name *</label>
+            <input type="text" id="admin_name" name="admin_name" class="form-input" placeholder="e.g. Evans Kiprop" required value="{{ form_data.admin_name if form_data else '' }}">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="admin_email">Administrator Login Email *</label>
+            <input type="email" id="admin_email" name="admin_email" class="form-input" placeholder="admin@skyline.co.ke" required value="{{ form_data.admin_email if form_data else '' }}">
+          </div>
+        </div>
+
+        <div style="margin-top:28px;">
+          <button type="submit" class="btn btn-gold btn-lg" style="width:100%; cursor:pointer;">
+            Proceed to Secure Paystack Checkout &rarr;
+          </button>
+        </div>
+        <p style="font-size:12px; color:var(--text-dim); text-align:center; margin-top:12px;">
+          You will be redirected to Paystack to complete payment of KSh {{ "{:,.2f}".format(tier.monthly_price_kes) }}.
+        </p>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function updateSlug(val) {
+    const slugInput = document.getElementById('company_slug');
+    const slugText = document.getElementById('slug-text');
+    const slugified = val.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    if (!slugInput.dataset.manual) {
+      slugInput.value = slugified;
+      slugText.innerText = slugified || 'your-slug';
+    }
+  }
+  document.getElementById('company_slug').addEventListener('input', function() {
+    this.dataset.manual = "true";
+    document.getElementById('slug-text').innerText = this.value || 'your-slug';
+  });
+</script>
+{% endblock %}

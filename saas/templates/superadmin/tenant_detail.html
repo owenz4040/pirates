@@ -1,0 +1,258 @@
+{% extends "superadmin/base.html" %}
+
+{% block title %}{{ tenant.name }} — Tenant Profile{% endblock %}
+
+{% block content %}
+<style>
+  .profile-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 28px;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .profile-grid {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 24px;
+  }
+  .info-group {
+    margin-bottom: 16px;
+  }
+  .info-label {
+    font-size: 12px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .info-val {
+    font-size: 15px;
+    color: #fff;
+    font-weight: 500;
+  }
+  .action-box {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 18px;
+    margin-bottom: 16px;
+  }
+  .action-box h4 {
+    font-size: 14px;
+    color: #fff;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .action-input {
+    width: 100%;
+    padding: 8px 12px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: #fff;
+    font-size: 13px;
+    margin-bottom: 10px;
+  }
+</style>
+
+<div class="profile-header">
+  <div>
+    <div style="display:flex; align-items:center; gap:12px; margin-bottom:6px;">
+      <h1 style="font-size:26px; font-weight:800; color:#fff;">{{ tenant.name }}</h1>
+      <span class="status-badge status-{{ tenant.status.value }}">{{ tenant.status.value|capitalize }}</span>
+    </div>
+    <div style="font-family:monospace; color:var(--gold); font-size:13px;">Slug: {{ tenant.slug }} &bull; ID: {{ tenant.id }}</div>
+  </div>
+  <div style="display:flex; gap:10px;">
+    {% if tenant.status.value == "active" %}
+    <form method="POST" action="/superadmin/tenants/{{ tenant.id }}/suspend" onsubmit="return confirm('Suspend this tenant ISP? All customer traffic and sync commands will be blocked.')">
+      <input type="hidden" name="reason" value="Administrative action from Superadmin console">
+      <button type="submit" class="btn btn-danger">Suspend Tenant</button>
+    </form>
+    {% else %}
+    <form method="POST" action="/superadmin/tenants/{{ tenant.id }}/reactivate" onsubmit="return confirm('Reactivate this tenant ISP?')">
+      <input type="hidden" name="reason" value="Reactivated from Superadmin console">
+      <button type="submit" class="btn btn-success">Reactivate Tenant</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="profile-grid">
+  <!-- Left Column: Details, Routers, Users, Payments -->
+  <div>
+    <!-- Subscription Card -->
+    <div class="card">
+      <div class="card-title">
+        <span>Active Subscription</span>
+        <span class="badge-superadmin">{{ tenant.subscription.tier.value|capitalize if tenant.subscription else 'None' }}</span>
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:16px;">
+        <div class="info-group">
+          <div class="info-label">Router Limit</div>
+          <div class="info-val" style="color:var(--gold);">{{ tenant.subscription.max_routers if tenant.subscription else 0 }} Allowed</div>
+        </div>
+        <div class="info-group">
+          <div class="info-label">Monthly Price</div>
+          <div class="info-val">KSh {{ "{:,.2f}".format(tenant.subscription.monthly_price_kes) if tenant.subscription else '0.00' }}</div>
+        </div>
+        <div class="info-group">
+          <div class="info-label">Expires On</div>
+          <div class="info-val" style="color:var(--blue);">{{ tenant.subscription.expires_at.strftime('%b %d, %Y') if tenant.subscription else 'N/A' }}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Enrolled Routers -->
+    <div class="card">
+      <div class="card-title">Enrolled MikroTik Routers ({{ tenant.routers|length }})</div>
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>Router Name</th>
+              <th>IP Address</th>
+              <th>Status</th>
+              <th>Last Seen</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in tenant.routers %}
+            <tr>
+              <td><strong style="color:#fff;">{{ r.name }}</strong></td>
+              <td style="font-family:monospace; font-size:12px;">{{ r.ip_address or 'Awaiting sync' }}</td>
+              <td><span class="status-badge status-{{ 'active' if r.status.value == 'online' else 'suspended' }}">{{ r.status.value|capitalize }}</span></td>
+              <td style="font-size:12px; color:var(--text-dim);">{{ r.last_seen_at.strftime('%b %d, %H:%M') if r.last_seen_at else 'Never' }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" style="color:var(--text-dim); text-align:center;">No routers connected yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Administrator Users -->
+    <div class="card">
+      <div class="card-title">Tenant Administrators & Staff ({{ tenant.users|length }})</div>
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>Full Name</th>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Active</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for u in tenant.users %}
+            <tr>
+              <td><strong style="color:#fff;">{{ u.full_name }}</strong></td>
+              <td>{{ u.email }}</td>
+              <td><span class="badge-superadmin" style="font-size:10px;">{{ u.role.value }}</span></td>
+              <td><span style="color:var(--green);">&#10004; Active</span></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" style="color:var(--text-dim); text-align:center;">No users registered yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Payment Audit Trail -->
+    <div class="card">
+      <div class="card-title">Platform Subscription Payments ({{ transactions|length }})</div>
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Reference</th>
+              <th>Tier</th>
+              <th>Amount</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for tx in transactions %}
+            <tr>
+              <td style="font-size:12px; color:var(--text-dim);">{{ tx.created_at.strftime('%b %d, %Y') }}</td>
+              <td style="font-family:monospace; font-size:12px;">{{ tx.paystack_reference }}</td>
+              <td>{{ tx.tier.value|capitalize }}</td>
+              <td><strong style="color:var(--gold);">KSh {{ "{:,.2f}".format(tx.amount_kes) }}</strong></td>
+              <td><span class="status-badge status-{{ 'active' if tx.status == 'success' else 'suspended' }}">{{ tx.status|capitalize }}</span></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" style="color:var(--text-dim); text-align:center;">No subscription payments recorded.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right Column: Administrative Override Operations -->
+  <div>
+    <div class="card">
+      <div class="card-title">Administrative Actions</div>
+
+      <!-- Change Plan Tier -->
+      <form method="POST" action="/superadmin/tenants/{{ tenant.id }}/change-tier" class="action-box">
+        <h4>Change Subscription Plan</h4>
+        <select name="tier" class="action-input">
+          <option value="starter" {% if tenant.subscription and tenant.subscription.tier.value == 'starter' %}selected{% endif %}>Starter (KSh 1,000 / 1 router)</option>
+          <option value="basic" {% if tenant.subscription and tenant.subscription.tier.value == 'basic' %}selected{% endif %}>Basic (KSh 1,500 / 2 routers)</option>
+          <option value="growth" {% if tenant.subscription and tenant.subscription.tier.value == 'growth' %}selected{% endif %}>Growth (KSh 3,500 / 4 routers)</option>
+          <option value="business" {% if tenant.subscription and tenant.subscription.tier.value == 'business' %}selected{% endif %}>Business (KSh 5,000 / 6 routers)</option>
+        </select>
+        <input type="text" name="reason" placeholder="Reason for tier adjustment" required class="action-input">
+        <button type="submit" class="btn btn-outline" style="width:100%;">Update Subscription Tier</button>
+      </form>
+
+      <!-- Extend Expiry -->
+      <form method="POST" action="/superadmin/tenants/{{ tenant.id }}/extend" class="action-box">
+        <h4>Extend Subscription Period</h4>
+        <select name="days" class="action-input">
+          <option value="30">+30 Days (1 Month)</option>
+          <option value="60">+60 Days (2 Months)</option>
+          <option value="90">+90 Days (3 Months)</option>
+          <option value="365">+365 Days (1 Year)</option>
+        </select>
+        <input type="text" name="reason" placeholder="Reason for extension (e.g. grace period)" required class="action-input">
+        <button type="submit" class="btn btn-outline" style="width:100%;">Extend Expiration</button>
+      </form>
+
+      <!-- Override Router Limit -->
+      <form method="POST" action="/superadmin/tenants/{{ tenant.id }}/override-router-limit" class="action-box">
+        <h4>Override Router Limit</h4>
+        <input type="number" name="max_routers" min="1" max="100" value="{{ tenant.subscription.max_routers if tenant.subscription else 1 }}" required class="action-input">
+        <input type="text" name="reason" placeholder="Reason for custom override" required class="action-input">
+        <button type="submit" class="btn btn-gold" style="width:100%;">Apply Custom Router Limit</button>
+      </form>
+    </div>
+
+    <!-- Company Contact Info -->
+    <div class="card">
+      <div class="card-title">Tenant Contact Info</div>
+      <div class="info-group">
+        <div class="info-label">Contact Email</div>
+        <div class="info-val">{{ tenant.contact_email }}</div>
+      </div>
+      <div class="info-group">
+        <div class="info-label">Contact Phone</div>
+        <div class="info-val">{{ tenant.contact_phone }}</div>
+      </div>
+      <div class="info-group">
+        <div class="info-label">Registered On</div>
+        <div class="info-val">{{ tenant.created_at.strftime('%b %d, %Y %H:%M UTC') if tenant.created_at else '' }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

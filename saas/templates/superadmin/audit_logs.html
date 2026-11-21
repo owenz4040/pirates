@@ -1,0 +1,54 @@
+{% extends "superadmin/base.html" %}
+
+{% block title %}Audit Trail — Platform Superadmin{% endblock %}
+
+{% block content %}
+<div style="margin-bottom:24px;">
+  <h1 style="font-size:24px; font-weight:700; color:#fff;">Superadmin Audit Logs</h1>
+  <p style="color:var(--text-dim); font-size:14px;">Immutable trail of all administrative updates, suspensions, and plan adjustments</p>
+</div>
+
+<div class="card" style="padding:0; overflow:hidden;">
+  <div class="table-responsive">
+    <table>
+      <thead>
+        <tr>
+          <th>Timestamp (UTC)</th>
+          <th>Actor</th>
+          <th>Action</th>
+          <th>Target</th>
+          <th>Reason</th>
+          <th>IP Address</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for log in logs %}
+        <tr>
+          <td style="font-size:12px; color:var(--text-dim);">
+            {{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') }}
+          </td>
+          <td style="font-weight:600; color:#fff;">
+            {{ log.actor_email }}
+          </td>
+          <td>
+            <span class="badge-superadmin" style="font-family:'JetBrains Mono', monospace; font-size:11px;">{{ log.action }}</span>
+          </td>
+          <td>
+            <span style="font-size:12px; color:var(--text-muted);">{{ log.target_type }}: </span>
+            <span style="font-family:monospace; font-size:12px; color:var(--gold);">{{ log.target_id[:12] }}...</span>
+          </td>
+          <td style="font-size:13px; color:var(--text-muted);">
+            {{ log.reason or 'No reason provided' }}
+          </td>
+          <td style="font-size:12px; color:var(--text-dim); font-family:monospace;">
+            {{ log.ip_address or '-' }}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" style="text-align:center; padding:32px; color:var(--text-dim);">No administrative actions recorded yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

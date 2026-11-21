@@ -13,3 +13,4 @@ python-multipart>=0.0.12
 africastalking>=1.2.9
 resend>=2.0
 itsdangerous>=2.2
+cryptography>=43.0

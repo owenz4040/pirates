@@ -1,0 +1,59 @@
+{% extends "superadmin/base.html" %}
+
+{% block title %}Setup Complete — MFA Recovery Codes{% endblock %}
+
+{% block content %}
+<style>
+  .complete-card {
+    max-width: 600px;
+    margin: 50px auto;
+    background: var(--panel);
+    border: 1px solid var(--border-gold);
+    border-radius: var(--radius-lg);
+    padding: 40px;
+    box-shadow: 0 15px 40px rgba(0,0,0,0.6);
+    text-align: center;
+  }
+  .recovery-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    background: #090a0f;
+    border: 1px dashed var(--border-gold);
+    border-radius: var(--radius-md);
+    padding: 20px;
+    margin: 24px 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    color: var(--gold);
+    user-select: all;
+  }
+</style>
+
+<div class="complete-card">
+  <div style="font-size:36px; color:var(--green); margin-bottom:12px;">&#10004;</div>
+  <h1 style="font-size:24px; font-weight:800; color:#fff; margin-bottom:8px;">Superadmin Account Activated</h1>
+  <p style="color:var(--text-muted); font-size:14px; line-height:1.5;">
+    Platform Owner identity for <strong style="color:#fff;">{{ email }}</strong> has been verified with mandatory TOTP MFA.
+  </p>
+
+  <div style="text-align:left; margin-top:24px;">
+    <h3 style="font-size:15px; color:#fff; margin-bottom:4px;">Single-Use MFA Emergency Recovery Codes</h3>
+    <p style="font-size:12px; color:var(--text-dim);">
+      Save these 8 recovery codes in a secure password manager. If you ever lose your authenticator app, each code can be used once to access your account. These codes will <strong>never be shown again</strong>.
+    </p>
+
+    <div class="recovery-grid">
+      {% for code in recovery_codes %}
+      <div>{{ code }}</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div style="margin-top:28px;">
+    <a href="/superadmin" class="btn btn-gold btn-lg" style="width:100%;">
+      I Have Saved My Recovery Codes &mdash; Open Superadmin Console &rarr;
+    </a>
+  </div>
+</div>
+{% endblock %}

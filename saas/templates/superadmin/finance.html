@@ -1,0 +1,116 @@
+{% extends "superadmin/base.html" %}
+
+{% block title %}Platform Financial Management — Superadmin{% endblock %}
+
+{% block content %}
+<style>
+  .finance-hero {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    margin-bottom: 32px;
+  }
+  .segregation-notice {
+    background: rgba(223, 183, 88, 0.08);
+    border: 1px solid var(--border-gold);
+    border-radius: var(--radius-md);
+    padding: 16px 20px;
+    margin-bottom: 24px;
+    font-size: 13px;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+</style>
+
+<div style="margin-bottom:24px;">
+  <h1 style="font-size:24px; font-weight:700; color:#fff;">Platform Subscription Revenue</h1>
+  <p style="color:var(--text-dim); font-size:14px;">Platform owner Paystack subscription transactions and recurring revenue audit</p>
+</div>
+
+<div class="segregation-notice">
+  <div style="font-size:20px; color:var(--gold);">&#128274;</div>
+  <div>
+    <strong>Strict Financial Segregation:</strong> Transactions shown here are SaaS subscription fees paid to the platform owner.
+    ISP customer payments (M-Pesa / Paystack) are collected exclusively by each individual tenant. Tenant payment API credentials are encrypted at rest with AES-256 and never exposed.
+  </div>
+</div>
+
+<div class="finance-hero">
+  <div class="card" style="margin-bottom:0;">
+    <div class="info-label">Total Platform Revenue Collected</div>
+    <div style="font-size:28px; font-weight:800; color:var(--gold); margin-top:6px;">
+      KSh {{ "{:,.2f}".format(total_revenue_kes) }}
+    </div>
+    <div style="font-size:12px; color:var(--green); margin-top:4px;">&#10004; Verified via Paystack</div>
+  </div>
+
+  <div class="card" style="margin-bottom:0;">
+    <div class="info-label">Successful Transactions</div>
+    <div style="font-size:28px; font-weight:800; color:#fff; margin-top:6px;">
+      {{ successful_txns_count }}
+    </div>
+    <div style="font-size:12px; color:var(--text-dim); margin-top:4px;">100% Settled</div>
+  </div>
+
+  <div class="card" style="margin-bottom:0;">
+    <div class="info-label">Active MRR</div>
+    <div style="font-size:28px; font-weight:800; color:var(--blue); margin-top:6px;">
+      KSh {{ "{:,.2f}".format(mrr_kes) }}
+    </div>
+    <div style="font-size:12px; color:var(--text-dim); margin-top:4px;">Monthly Recurring Revenue</div>
+  </div>
+</div>
+
+<!-- Transactions Search & Table -->
+<div class="card" style="margin-top:28px; padding:0; overflow:hidden;">
+  <div style="padding:18px 24px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+    <h3 style="font-size:16px; color:#fff;">Subscription Transactions ({{ transactions|length }})</h3>
+  </div>
+  <div class="table-responsive">
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Reference</th>
+          <th>Tenant / Company</th>
+          <th>Subscription Tier</th>
+          <th>Amount</th>
+          <th>Paystack Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for tx in transactions %}
+        <tr>
+          <td style="font-size:12px; color:var(--text-dim);">
+            {{ tx.created_at.strftime('%b %d, %Y %H:%M') }}
+          </td>
+          <td style="font-family:'JetBrains Mono', monospace; font-size:12px; color:#fff;">
+            {{ tx.paystack_reference }}
+          </td>
+          <td>
+            {% if tx.tenant_id %}
+            <a href="/superadmin/tenants/{{ tx.tenant_id }}" style="font-weight:600;">View Tenant</a>
+            {% else %}
+            <span style="color:var(--text-dim);">Pending / Unassigned</span>
+            {% endif %}
+          </td>
+          <td>
+            <span class="badge-superadmin">{{ tx.tier.value|capitalize }}</span>
+          </td>
+          <td>
+            <strong style="color:var(--gold);">KSh {{ "{:,.2f}".format(tx.amount_kes) }}</strong>
+          </td>
+          <td>
+            <span class="status-badge status-{{ 'active' if tx.status == 'success' else 'suspended' }}">{{ tx.status|capitalize }}</span>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" style="text-align:center; padding:32px; color:var(--text-dim);">No transactions recorded yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,86 @@
+{% extends "superadmin/base.html" %}
+
+{% block title %}Superadmin Sign In — COwen{% endblock %}
+
+{% block content %}
+<style>
+  .login-card {
+    max-width: 420px;
+    margin: 80px auto;
+    background: var(--panel);
+    border: 1px solid var(--border-gold);
+    border-radius: var(--radius-lg);
+    padding: 36px 32px;
+    box-shadow: 0 15px 40px rgba(0,0,0,0.6);
+  }
+  .login-header {
+    text-align: center;
+    margin-bottom: 28px;
+  }
+  .login-header h1 {
+    font-size: 22px;
+    font-weight: 700;
+    color: #fff;
+    margin-top: 10px;
+  }
+  .form-group {
+    margin-bottom: 20px;
+  }
+  .form-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 8px;
+  }
+  .form-input {
+    width: 100%;
+    padding: 12px 14px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: #fff;
+    font-family: inherit;
+    font-size: 14px;
+  }
+  .form-input:focus {
+    outline: none;
+    border-color: var(--gold);
+    background: rgba(255, 255, 255, 0.07);
+  }
+</style>
+
+<div class="login-card">
+  <div class="login-header">
+    <div style="width:42px; height:42px; background:linear-gradient(135deg, var(--gold), var(--gold-dark)); border-radius:var(--radius-sm); margin:0 auto; display:flex; align-items:center; justify-content:center; color:#090a0f; font-weight:800; font-size:22px;">
+      &Delta;
+    </div>
+    <h1>Platform Superadmin</h1>
+    <p style="color:var(--text-dim); font-size:13px; margin-top:4px;">Restricted administrative access only</p>
+  </div>
+
+  {% if error %}
+  <div class="flash-alert flash-error" style="margin-bottom:20px;">
+    <span>{{ error }}</span>
+  </div>
+  {% endif %}
+
+  <form method="POST" action="/superadmin/login">
+    <div class="form-group">
+      <label class="form-label" for="email">Superadmin Email</label>
+      <input type="email" id="email" name="email" class="form-input" required autofocus placeholder="superadmin@cowen.app">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="password">Password</label>
+      <input type="password" id="password" name="password" class="form-input" required placeholder="••••••••••••">
+    </div>
+
+    <div style="margin-top:28px;">
+      <button type="submit" class="btn btn-gold" style="width:100%; padding:12px; font-size:15px;">
+        Sign In to Superadmin &rarr;
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,118 @@
+{% extends "superadmin/base.html" %}
+
+{% block title %}MFA Enrollment & Password Setup — Superadmin{% endblock %}
+
+{% block content %}
+<style>
+  .setup-card {
+    max-width: 540px;
+    margin: 50px auto;
+    background: var(--panel);
+    border: 1px solid var(--border-gold);
+    border-radius: var(--radius-lg);
+    padding: 36px;
+    box-shadow: 0 15px 40px rgba(0,0,0,0.6);
+  }
+  .setup-step {
+    display: inline-block;
+    background: rgba(74, 222, 128, 0.15);
+    border: 1px solid rgba(74, 222, 128, 0.3);
+    color: var(--green);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 12px;
+  }
+  .mfa-box {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 20px;
+    margin: 20px 0;
+    text-align: center;
+  }
+  .secret-display {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--gold);
+    letter-spacing: 0.15em;
+    background: #090a0f;
+    padding: 10px 16px;
+    border-radius: var(--radius-sm);
+    border: 1px dashed var(--border-gold);
+    margin: 12px 0;
+    user-select: all;
+  }
+  .form-group { margin-bottom: 18px; }
+  .form-label { display: block; font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+  .form-input {
+    width: 100%;
+    padding: 11px 14px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: #fff;
+    font-family: inherit;
+    font-size: 14px;
+  }
+  .form-input:focus { outline: none; border-color: var(--gold); }
+</style>
+
+<div class="setup-card">
+  <div style="text-align:center; margin-bottom:20px;">
+    <span class="setup-step">Step 2 of 2: Mandatory MFA Enrollment</span>
+    <h1 style="font-size:22px; font-weight:700; color:#fff; margin-bottom:6px;">Set Password & Enroll TOTP MFA</h1>
+    <p style="color:var(--text-muted); font-size:14px;">
+      Account: <strong style="color:#fff;">{{ email }}</strong>
+    </p>
+  </div>
+
+  {% if error %}
+  <div class="flash-alert flash-error">
+    <span>{{ error }}</span>
+  </div>
+  {% endif %}
+
+  <!-- Authenticator Secret Display -->
+  <div class="mfa-box">
+    <div style="font-size:13px; color:var(--text-dim); text-transform:uppercase; font-weight:600;">
+      Add to Authenticator App (Google Authenticator / Authy / 1Password)
+    </div>
+    <div class="secret-display">{{ totp_secret }}</div>
+    <div style="font-size:12px; color:var(--text-muted);">
+      Or copy URI: <a href="{{ totp_uri }}" style="font-size:11px; word-break:break-all;">Open in Authenticator</a>
+    </div>
+  </div>
+
+  <form method="POST" action="/superadmin/setup/complete">
+    <input type="hidden" name="email" value="{{ email }}">
+
+    <div class="form-group">
+      <label class="form-label" for="password">Create Superadmin Password (min 10 characters) *</label>
+      <input type="password" id="password" name="password" class="form-input" minlength="10" required placeholder="••••••••••••">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="password_confirm">Confirm Password *</label>
+      <input type="password" id="password_confirm" name="password_confirm" class="form-input" minlength="10" required placeholder="••••••••••••">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="totp_code" style="color:var(--gold);">
+        Enter 6-Digit Authenticator Code to Confirm Enrollment *
+      </label>
+      <input type="text" id="totp_code" name="totp_code" class="form-input" maxlength="6" pattern="[0-9]{6}" required placeholder="123456" style="font-family:'JetBrains Mono', monospace; font-size:18px; letter-spacing:0.2em; text-align:center;">
+    </div>
+
+    <div style="margin-top:28px;">
+      <button type="submit" class="btn btn-gold" style="width:100%; padding:13px; font-size:15px; cursor:pointer;">
+        Activate Platform Superadmin Account &rarr;
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}

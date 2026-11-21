@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}COwen — Modern Multi-Tenant ISP & Hotspot Billing SaaS{% endblock %}</title>
+  <meta name="description" content="Turn your MikroTik routers into a fully automated ISP & Hotspot business with automated PPPoE management, visual captive portal builder, and instant M-Pesa billing.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #090a0f;
+      --bg-card: rgba(18, 22, 33, 0.75);
+      --bg-card-hover: rgba(26, 32, 48, 0.85);
+      --border: rgba(255, 255, 255, 0.08);
+      --border-gold: rgba(223, 183, 88, 0.35);
+      --gold: #dfb758;
+      --gold-light: #f7d57f;
+      --gold-dark: #b8913e;
+      --gold-glow: rgba(223, 183, 88, 0.2);
+      --text: #f0f2f5;
+      --text-muted: #949eb5;
+      --text-dim: #64748b;
+      --blue: #5b9dff;
+      --green: #4ade80;
+      --red: #f87171;
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 18px;
+      --transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      background-image: 
+        radial-gradient(circle at 10% 20%, rgba(223, 183, 88, 0.06), transparent 30%),
+        radial-gradient(circle at 90% 70%, rgba(91, 157, 255, 0.05), transparent 35%),
+        radial-gradient(circle at 50% 50%, rgba(18, 22, 33, 0.4), transparent 50%);
+      background-attachment: fixed;
+      font-family: 'Outfit', sans-serif;
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      line-height: 1.6;
+    }
+    a { color: var(--gold); text-decoration: none; transition: var(--transition); }
+    a:hover { color: var(--gold-light); }
+    
+    /* Navigation Bar */
+    .navbar {
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+      background: rgba(9, 10, 15, 0.85);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 24px;
+    }
+    .nav-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: #fff;
+    }
+    .brand-icon {
+      width: 34px;
+      height: 34px;
+      background: linear-gradient(135deg, var(--gold), var(--gold-dark));
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--bg);
+      font-weight: 800;
+      font-size: 18px;
+      box-shadow: 0 0 16px var(--gold-glow);
+    }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 28px;
+      list-style: none;
+    }
+    .nav-links a {
+      color: var(--text-muted);
+      font-size: 15px;
+      font-weight: 500;
+    }
+    .nav-links a:hover {
+      color: #fff;
+    }
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: var(--transition);
+      text-decoration: none;
+    }
+    .btn-gold {
+      background: linear-gradient(135deg, var(--gold), var(--gold-dark));
+      color: #090a0f;
+      box-shadow: 0 4px 14px var(--gold-glow);
+    }
+    .btn-gold:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(223, 183, 88, 0.35);
+      color: #000;
+    }
+    .btn-outline {
+      background: rgba(255, 255, 255, 0.03);
+      border-color: var(--border);
+      color: var(--text);
+    }
+    .btn-outline:hover {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.2);
+      color: #fff;
+    }
+    .btn-lg {
+      padding: 14px 28px;
+      font-size: 16px;
+      border-radius: var(--radius-md);
+    }
+    
+    /* Layout */
+    main { flex: 1; }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--border);
+      background: rgba(9, 10, 15, 0.95);
+      padding: 60px 0 30px;
+      margin-top: 80px;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+    .footer-grid {
+      display: grid;
+      grid-template-columns: 2fr repeat(3, 1fr);
+      gap: 40px;
+      margin-bottom: 40px;
+    }
+    .footer-col h4 {
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+    .footer-col ul {
+      list-style: none;
+    }
+    .footer-col li {
+      margin-bottom: 10px;
+    }
+    .footer-col a {
+      color: var(--text-muted);
+    }
+    .footer-col a:hover {
+      color: var(--gold);
+    }
+    .footer-bottom {
+      border-top: 1px solid var(--border);
+      padding-top: 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      color: var(--text-dim);
+    }
+    
+    @media (max-width: 768px) {
+      .nav-links { display: none; }
+      .footer-grid { grid-template-columns: 1fr; gap: 30px; }
+      .footer-bottom { flex-direction: column; gap: 12px; text-align: center; }
+    }
+  </style>
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="/" class="brand">
+        <div class="brand-icon">&Delta;</div>
+        <span>COwen</span>
+      </a>
+      <ul class="nav-links">
+        <li><a href="/#features">Features</a></li>
+        <li><a href="/#pricing">Pricing</a></li>
+        <li><a href="/#architecture">Architecture</a></li>
+        <li><a href="/#faq">FAQ</a></li>
+      </ul>
+      <div class="nav-actions">
+        <a href="/#pricing" class="btn btn-gold">Get Started</a>
+      </div>
+    </div>
+  </nav>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer>
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-col">
+          <div class="brand" style="margin-bottom: 16px;">
+            <div class="brand-icon">&Delta;</div>
+            <span>COwen</span>
+          </div>
+          <p style="max-width: 320px; line-height: 1.6; color: var(--text-dim);">
+            The enterprise-grade multi-tenant ISP billing & captive portal platform for modern network operators.
+          </p>
+        </div>
+        <div class="footer-col">
+          <h4>Product</h4>
+          <ul>
+            <li><a href="/#features">MikroTik Sync</a></li>
+            <li><a href="/#features">PPPoE Engine</a></li>
+            <li><a href="/#features">Hotspot Builder</a></li>
+            <li><a href="/#pricing">Pricing Plans</a></li>
+          </ul>
+        </div>
+        <div class="footer-col">
+          <h4>Integrations</h4>
+          <ul>
+            <li><a href="/#features">M-Pesa Daraja</a></li>
+            <li><a href="/#features">Paystack Checkout</a></li>
+            <li><a href="/#architecture">RouterOS v6 & v7</a></li>
+            <li><a href="/#architecture">Pull-Based Sync</a></li>
+          </ul>
+        </div>
+        <div class="footer-col">
+          <h4>Support & Legal</h4>
+          <ul>
+            <li><a href="mailto:support@cowen.app">support@cowen.app</a></li>
+            <li><a href="/#faq">Help & FAQ</a></li>
+            <li><a href="#">Privacy Policy</a></li>
+            <li><a href="#">Terms of Service</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <p>&copy; 2026 COwen ISP Billing. All rights reserved. Built for independent ISPs.</p>
+        <p>Enterprise Multi-Tenant ISP Billing Ecosystem</p>
+      </div>
+    </div>
+  </footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

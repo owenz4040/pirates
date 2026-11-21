@@ -1,0 +1,59 @@
+{% extends "superadmin/base.html" %}
+
+{% block title %}Two-Factor Authentication — Superadmin{% endblock %}
+
+{% block content %}
+<style>
+  .mfa-card {
+    max-width: 420px;
+    margin: 80px auto;
+    background: var(--panel);
+    border: 1px solid var(--border-gold);
+    border-radius: var(--radius-lg);
+    padding: 36px 32px;
+    box-shadow: 0 15px 40px rgba(0,0,0,0.6);
+    text-align: center;
+  }
+  .form-input {
+    width: 100%;
+    padding: 12px 14px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: #fff;
+    font-size: 24px;
+    text-align: center;
+    letter-spacing: 0.3em;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .form-input:focus { outline: none; border-color: var(--gold); }
+</style>
+
+<div class="mfa-card">
+  <div style="font-size:32px; color:var(--gold); margin-bottom:12px;">&#128274;</div>
+  <h1 style="font-size:22px; font-weight:700; color:#fff; margin-bottom:6px;">Two-Factor Authentication</h1>
+  <p style="color:var(--text-muted); font-size:13px; margin-bottom:24px;">
+    Enter the 6-digit code from your authenticator app for <strong style="color:#fff;">{{ email }}</strong>.
+  </p>
+
+  {% if error %}
+  <div class="flash-alert flash-error" style="margin-bottom:20px;">
+    <span>{{ error }}</span>
+  </div>
+  {% endif %}
+
+  <form method="POST" action="/superadmin/mfa">
+    <div style="margin-bottom:20px;">
+      <input type="text" name="totp_code" class="form-input" maxlength="6" pattern="[0-9]{6}" required autofocus placeholder="000000">
+    </div>
+
+    <button type="submit" class="btn btn-gold" style="width:100%; padding:12px; font-size:15px; cursor:pointer;">
+      Verify Code &rarr;
+    </button>
+  </form>
+
+  <div style="margin-top:20px;">
+    <a href="/superadmin/logout" style="font-size:12px; color:var(--text-dim);">&larr; Cancel and Sign Out</a>
+  </div>
+</div>
+{% endblock %}
