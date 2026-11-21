@@ -16,6 +16,10 @@ class SaasBase(DeclarativeBase):
 
 
 db_url = getattr(saas_settings, "effective_database_url", saas_settings.saas_database_url)
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql+psycopg://", 1)
+elif db_url.startswith("postgresql://") and not db_url.startswith("postgresql+"):
+    db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
 
 # Connect arguments: SQLite requires check_same_thread=False for multithreading
 connect_args = {}
