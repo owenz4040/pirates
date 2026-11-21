@@ -44,5 +44,20 @@ class SaasSettings(BaseSettings):
     superadmin_email: str = "owenzcolin@gmail.com"
     superadmin_password: str = ""
 
+    @property
+    def effective_database_url(self) -> str:
+        url = os.environ.get("SAAS_DATABASE_URL") or self.saas_database_url
+        if url.startswith("sqlite:///./") and os.environ.get("VERCEL"):
+            url = "sqlite:////tmp/saas.db"
+        return url
+
+    @property
+    def effective_paystack_secret_key(self) -> str:
+        return self.platform_paystack_secret_key or os.environ.get("PAYSTACK_SECRET_KEY") or ""
+
+    @property
+    def effective_paystack_public_key(self) -> str:
+        return self.platform_paystack_public_key or os.environ.get("PAYSTACK_PUBLIC_KEY") or ""
+
 
 saas_settings = SaasSettings()

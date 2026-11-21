@@ -161,12 +161,24 @@ async def initiate_checkout(
     db.add(pending)
     db.commit()
 
+    # Determine dynamic callback url based on the current request domain
+    # This guarantees it redirects back to the correct domain (e.g. cowen.vercel.app)
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    dynamic_callback = f"{proto}://{host}/checkout/callback"
+    cb_url = (
+        saas_settings.platform_paystack_callback_url
+        if ("localhost" not in saas_settings.platform_paystack_callback_url or "localhost" in host)
+        else dynamic_callback
+    )
+
     # Initialize Paystack checkout
     try:
         init_res = paystack.initialize_transaction(
             email=admin_email,
             amount_kes=tier.monthly_price_kes,
             reference=reference,
+            callback_url=cb_url,
             metadata={
                 "company_name": company_name,
                 "company_slug": company_slug,

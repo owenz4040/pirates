@@ -15,15 +15,17 @@ class SaasBase(DeclarativeBase):
     pass
 
 
+db_url = getattr(saas_settings, "effective_database_url", saas_settings.saas_database_url)
+
 # Connect arguments: SQLite requires check_same_thread=False for multithreading
 connect_args = {}
-if saas_settings.saas_database_url.startswith("sqlite"):
+if db_url.startswith("sqlite"):
     connect_args = {"check_same_thread": False}
-    saas_engine = create_engine(saas_settings.saas_database_url, connect_args=connect_args)
+    saas_engine = create_engine(db_url, connect_args=connect_args)
 elif os.environ.get("VERCEL"):
-    saas_engine = create_engine(saas_settings.saas_database_url, poolclass=NullPool)
+    saas_engine = create_engine(db_url, poolclass=NullPool)
 else:
-    saas_engine = create_engine(saas_settings.saas_database_url, pool_pre_ping=True)
+    saas_engine = create_engine(db_url, pool_pre_ping=True)
 
 SaasSessionLocal = sessionmaker(bind=saas_engine, autoflush=False, expire_on_commit=False)
 

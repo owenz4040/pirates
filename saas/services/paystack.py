@@ -19,7 +19,12 @@ class PaystackPlatformError(RuntimeError):
 
 
 def _get_secret_key(override_key: str | None = None) -> str:
-    key = override_key or saas_settings.platform_paystack_secret_key
+    key = (
+        override_key
+        or getattr(saas_settings, "effective_paystack_secret_key", None)
+        or saas_settings.platform_paystack_secret_key
+        or ""
+    )
     if not key:
         raise PaystackPlatformError("PLATFORM_PAYSTACK_SECRET_KEY is not configured.")
     return key
