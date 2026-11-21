@@ -22,6 +22,7 @@ from saas.routers.superadmin import superadmin_router
 from saas.routers.tenant import tenant_router
 from saas.security.auth import generate_secure_token, hash_token
 from saas.security.bootstrap import bootstrap_superadmin
+from saas.security.csrf import verify_csrf_token
 from saas.security.context import (
     SubscriptionLimitExceededError,
     TenantContext,
@@ -140,7 +141,7 @@ class CreateRouterRequest(BaseModel):
     description: str | None = None
 
 
-@app.post("/api/tenant/routers", status_code=status.HTTP_201_CREATED)
+@app.post("/api/tenant/routers", status_code=status.HTTP_201_CREATED, dependencies=[Depends(verify_csrf_token)])
 def create_router(
     payload: CreateRouterRequest,
     context: TenantContext = Depends(resolve_tenant_context),
@@ -184,7 +185,7 @@ class ConfigureMpesaRequest(BaseModel):
     mpesa_type: str = "paybill"
 
 
-@app.post("/api/tenant/payment-config/mpesa")
+@app.post("/api/tenant/payment-config/mpesa", dependencies=[Depends(verify_csrf_token)])
 def configure_tenant_mpesa(
     payload: ConfigureMpesaRequest,
     context: TenantContext = Depends(resolve_tenant_context),

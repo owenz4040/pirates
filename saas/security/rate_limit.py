@@ -26,6 +26,8 @@ def is_rate_limited(db: Session, ip: str | None, email: str | None) -> tuple[boo
     """Check if the given IP or email is currently locked out.
 
     Returns (is_locked, remaining_seconds).
+    Enforces persistent shared storage lockout across both target account and originating IP,
+    preventing attackers from bypassing limits by rotating email addresses.
     """
     now = datetime.now(timezone.utc)
     keys_to_check = []
@@ -49,7 +51,7 @@ def is_rate_limited(db: Session, ip: str | None, email: str | None) -> tuple[boo
 
 
 def record_failed_login(db: Session, ip: str | None, email: str | None) -> None:
-    """Record a failed login attempt and apply lockout when thresholds are exceeded."""
+    """Record a failed login attempt for both IP and email, applying lockout when thresholds are exceeded."""
     now = datetime.now(timezone.utc)
     keys_to_update = []
     if ip:
@@ -71,16 +73,31 @@ def record_failed_login(db: Session, ip: str | None, email: str | None) -> None:
 
 
 def clear_failed_logins(db: Session, ip: str | None, email: str | None) -> None:
-    """Reset failed attempts on a successful authentication."""
-    keys_to_clear = []
-    if ip:
-        keys_to_clear.append(f"ip:{ip.strip()}")
-    if email:
-        keys_to_clear.append(f"email:{email.strip().lower()}")
+    """Reset failed attempts on a successful authentication.
 
-    for k in keys_to_clear:
-        record = db.scalar(select(TenantLoginAttempt).where(TenantLoginAttempt.key == k))
-        if record:
-            record.failed_attempts = 0
-            record.locked_until = None
+    Resets the user's email lockout. Resets IP failure count only if the IP
+    is not actively locked out.
+    """
+    now = datetime.now(timezone.utc)
+    if email:
+        email_record = db.scalar(
+            select(TenantLoginAttempt).where(TenantLoginAttempt.key == f"email:{email.strip().lower()}")
+        )
+        if email_record:
+            email_record.failed_attempts = 0
+            email_record.locked_until = None
+
+    if ip:
+        ip_record = db.scalar(
+            select(TenantLoginAttempt).where(TenantLoginAttempt.key == f"ip:{ip.strip()}")
+        )
+        if ip_record:
+            locked_until = ip_record.locked_until
+            if locked_until and locked_until.tzinfo is None:
+                locked_until = locked_until.replace(tzinfo=timezone.utc)
+            # Only reset if not actively locked
+            if not locked_until or locked_until <= now:
+                ip_record.failed_attempts = 0
+                ip_record.locked_until = None
+
     db.commit()

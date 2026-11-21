@@ -81,10 +81,25 @@ templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
 # RouterOS payload size boundaries for in-memory fetch
 BATCH_BYTES_ROS6 = 3500
-BATCH_BYTES_ROS7 = 48000
-SESSION_INACTIVITY_TIMEOUT = 43200  # 12 hours
+BATCH_BYTES_ROS7 = 32768
+# Explicit session lifetime policies:
+SESSION_INACTIVITY_TIMEOUT = 43200  # 12 hours sliding inactivity timeout
+SESSION_ABSOLUTE_LIFETIME = 86400   # 24 hours maximum absolute lifetime from initial login
 
 tenant_router = APIRouter(tags=["tenant"])
+
+
+def get_client_ip(request: Request) -> str:
+    """Extract client IP respecting X-Forwarded-For and X-Real-IP reverse proxy headers."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+    if request.client and request.client.host:
+        return request.client.host
+    return "127.0.0.1"
 
 
 # =====================================================================
@@ -141,13 +156,28 @@ def get_tenant_context_optional(request: Request, db: Session = Depends(get_saas
     if not user:
         return None
 
-    # Check 12-hour session inactivity timeout for browser sessions
+    # Session lifecycle validation for browser sessions
     if "session" in request.scope:
         now_ts = int(datetime.now(timezone.utc).timestamp())
+
+        # 1. Session Version check (revokes session immediately upon password change or admin revocation)
+        stored_version = request.session.get("session_version")
+        if stored_version is not None and stored_version != user.session_version:
+            request.session.clear()
+            return None
+
+        # 2. Absolute lifetime check (max 24 hours from original login)
+        login_time = request.session.get("tenant_login_time")
+        if login_time and (now_ts - int(login_time) > SESSION_ABSOLUTE_LIFETIME):
+            request.session.clear()
+            return None
+
+        # 3. Sliding inactivity timeout check (12 hours since last request)
         last_activity = request.session.get("tenant_last_activity")
         if last_activity and (now_ts - int(last_activity) > SESSION_INACTIVITY_TIMEOUT):
             request.session.clear()
             return None
+
         # Refresh sliding activity timestamp
         request.session["tenant_last_activity"] = now_ts
 
@@ -226,7 +256,7 @@ def tenant_login(
     db: Session = Depends(get_saas_db),
 ):
     """Processes tenant admin login with database-backed rate limiting."""
-    client_ip = request.client.host if request.client else None
+    client_ip = get_client_ip(request)
     clean_email = email.strip().lower()
 
     # 1. Rate limiting check across Vercel serverless instances
@@ -304,6 +334,7 @@ def tenant_login(
     now_ts = int(datetime.now(timezone.utc).timestamp())
     request.session["user_id"] = user.id
     request.session["tenant_user_id"] = user.id
+    request.session["session_version"] = user.session_version
     request.session["tenant_login_time"] = now_ts
     request.session["tenant_last_activity"] = now_ts
     if tenant:
@@ -426,6 +457,8 @@ def _build_mikrotik_setup_script(sync_url: str, raw_token: str, router_name: str
 
     Zero files are written to NAND flash storage.
     Initial removal is safely wrapped with on-error handlers.
+    Response is strictly validated: status must be finished, size within 32KB,
+    and payload must match the '# COwen-Batch-OK' signature before execution in memory.
     """
     clean_name = quote_routeros(router_name)
     q_url = quote_routeros(sync_url)
@@ -434,6 +467,9 @@ def _build_mikrotik_setup_script(sync_url: str, raw_token: str, router_name: str
     return (
         f"# MikroTik RouterOS Outbound HTTPS Synchronization Script\n"
         f"# Device: {clean_name}\n"
+        f"# PREREQUISITE: MikroTik routers require CA root certificates installed for HTTPS validation.\n"
+        f"# RouterOS 7: /certificate enable-ssl-certificate\n"
+        f"# RouterOS 6 / 7: /tool fetch url=\"https://curl.se/ca/cacert.pem\" dst-path=\"cacert.pem\" check-certificate=no; /certificate import file-name=\"cacert.pem\" passphrase=\"\"\n"
         f":do {{ /system script remove [find name=\"COwen_Sync_Script\"] }} on-error={{}}\n"
         f":do {{ /system scheduler remove [find name=\"COwen_Sync\"] }} on-error={{}}\n\n"
         f"/system script add name=\"COwen_Sync_Script\" source=\"\\\n"
@@ -443,13 +479,17 @@ def _build_mikrotik_setup_script(sync_url: str, raw_token: str, router_name: str
         f"  :local brd [/system resource get board-name];\\\n"
         f"  :local info (\\\"version=\\\" . $ver . \\\"&uptime=\\\" . $upt . \\\"&cpu=\\\" . $cpu . \\\"&board=\\\" . $brd);\\\n"
         f"  :local body \\\"\\\";\\\n"
+        f"  :local status \\\"\\\";\\\n"
         f"  :do {{\\\n"
-        f"    :local res [/tool fetch url={q_url} http-method=post http-header-field={q_header} http-data=$info output=user as-value];\\\n"
+        f"    :local res [/tool fetch url={q_url} http-method=post http-header-field={q_header} http-data=$info check-certificate=yes-without-crl output=user as-value];\\\n"
+        f"    :set status ($res->\\\"status\\\");\\\n"
         f"    :set body ($res->\\\"data\\\");\\\n"
         f"  }} on-error={{ :log warning \\\"COwen_Sync: fetch failed\\\" }};\\\n"
-        f"  :if ([:len $body] > 0) do={{\\\n"
-        f"    :local run [:parse $body];\\\n"
-        f"    $run;\\\n"
+        f"  :if ($status = \\\"finished\\\" and [:len $body] >= 16 and [:len $body] <= 32768 and [:pick $body 0 16] = \\\"# COwen-Batch-OK\\\") do={{\\\n"
+        f"    :do {{\\\n"
+        f"      :local run [:parse $body];\\\n"
+        f"      $run;\\\n"
+        f"    }} on-error={{ :log warning \\\"COwen_Sync: parse or execution error\\\" }};\\\n"
         f"  }};\\\n"
         f"\"\n\n"
         f"/system scheduler add name=\"COwen_Sync\" interval=60s on-event=\"COwen_Sync_Script\" start-time=startup\n"
@@ -1409,7 +1449,12 @@ def tenant_settings_password_save(
     context.user.session_version += 1
     db.commit()
 
-    set_flash(request, msg="Password updated successfully.")
+    # Update active browser session version so current session remains authenticated
+    # while all other concurrent devices and stolen sessions are immediately invalidated
+    if "session" in request.scope:
+        request.session["session_version"] = context.user.session_version
+
+    set_flash(request, msg="Password updated successfully. Other active sessions have been revoked.")
     return RedirectResponse(url="/tenant/settings", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -1418,15 +1463,16 @@ def tenant_settings_password_save(
 # =====================================================================
 
 def render_router_batch(batch: list[RouterCommand], ack_url: str, raw_token: str) -> str:
-    """Renders a batch of RouterOS commands with per-command error handling and ack callback."""
+    """Renders a batch of RouterOS commands with magic verification header, per-command error handling and ack callback."""
     if not batch:
         return ""
 
-    lines = [':local ok ""', ':local failed ""']
+    lines = ["# COwen-Batch-OK", ':local ok ""', ':local failed ""']
     for cmd in batch:
         # Wrap each command safely so a failure in one command does not halt the others
+        clean_script = cmd.script.strip()
         lines.append(
-            f":do {{{cmd.script}; :set ok ($ok . \"{cmd.id},\")}} "
+            f":do {{{clean_script}; :set ok ($ok . \"{cmd.id},\")}} "
             f"on-error={{:set failed ($failed . \"{cmd.id},\"); :log warning \"COwen_Sync: command {cmd.id} failed\"}}"
         )
 
@@ -1436,7 +1482,7 @@ def render_router_batch(batch: list[RouterCommand], ack_url: str, raw_token: str
     lines.append(
         f":do {{/tool fetch url={q_ack_url} http-method=post "
         f"http-header-field={q_ack_header} "
-        f"http-data=(\"ok=\" . $ok . \"&failed=\" . $failed) output=none}} "
+        f"http-data=(\"ok=\" . $ok . \"&failed=\" . $failed) check-certificate=yes-without-crl output=none}} "
         f"on-error={{:log warning \"COwen_Sync: could not report results\"}}"
     )
     return "\n".join(lines) + "\n"
@@ -1507,11 +1553,12 @@ async def router_sync_endpoint(
     if client_host:
         router.ip_address = client_host
 
-    # Fetch queued pending commands strictly scoped to this router
+    # Fetch queued pending commands strictly scoped to this router and tenant
     pending_commands = db.scalars(
         select(RouterCommand)
         .where(
             RouterCommand.router_id == router.id,
+            RouterCommand.tenant_id == router.tenant_id,
             RouterCommand.status == RouterCommandStatus.pending,
         )
         .order_by(RouterCommand.created_at.asc())
@@ -1587,6 +1634,7 @@ async def router_ack_endpoint(
             select(RouterCommand).where(
                 RouterCommand.id.in_(ok_ids),
                 RouterCommand.router_id == router.id,
+                RouterCommand.tenant_id == router.tenant_id,
             )
         ).all()
         for cmd in cmds_ok:
@@ -1598,6 +1646,7 @@ async def router_ack_endpoint(
             select(RouterCommand).where(
                 RouterCommand.id.in_(failed_ids),
                 RouterCommand.router_id == router.id,
+                RouterCommand.tenant_id == router.tenant_id,
             )
         ).all()
         for cmd in cmds_failed:

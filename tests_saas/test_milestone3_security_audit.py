@@ -409,3 +409,169 @@ def test_router_token_rotation_invalidates_old_token(client, db_session):
         headers={"X-Router-Token": old_raw, "Accept": "application/json"},
     )
     assert resp2.status_code == 401
+
+
+# =====================================================================
+# 7. Additional Preview Readiness Hardening Tests
+# =====================================================================
+
+def test_login_rate_limiting_by_ip_blocks_email_rotation(client, db_session):
+    """Verifies that an attacker rotating email addresses from the same IP is blocked."""
+    ip_headers = {"X-Forwarded-For": "203.0.113.88"}
+
+    get_resp = client.get("/tenant/login")
+    match = re.search(r'name="csrf_token"\s+value="([^"]+)"', get_resp.text)
+    csrf = match.group(1)
+
+    # 4 failed attempts with 4 different email addresses from the same IP
+    for i in range(1, 5):
+        resp = client.post(
+            "/tenant/login",
+            data={"email": f"attacker_{i}@target.com", "password": "BadPassword123!", "csrf_token": csrf},
+            headers=ip_headers,
+        )
+        assert resp.status_code == 401
+
+    # 5th failed attempt with a 5th different email address
+    resp_5 = client.post(
+        "/tenant/login",
+        data={"email": "attacker_5@target.com", "password": "BadPassword123!", "csrf_token": csrf},
+        headers=ip_headers,
+    )
+    assert resp_5.status_code in (401, 429)
+
+    # 6th attempt with a brand new 6th email address is immediately rejected with 429 due to IP lockout
+    resp_6 = client.post(
+        "/tenant/login",
+        data={"email": "attacker_6@target.com", "password": "AnyPassword123!", "csrf_token": csrf},
+        headers=ip_headers,
+    )
+    assert resp_6.status_code == 429
+    assert "Too many failed login attempts" in resp_6.text
+
+
+def test_password_change_invalidates_concurrent_sessions(client, db_session):
+    """Verifies that changing password updates session_version and revokes concurrent sessions."""
+    tenant, admin = make_tenant(db_session, "Tenant Revoke", "t-revoke")
+
+    # Step 1: Log in with browser client
+    get_resp = client.get("/tenant/login")
+    match = re.search(r'name="csrf_token"\s+value="([^"]+)"', get_resp.text)
+    csrf = match.group(1)
+
+    login_resp = client.post(
+        "/tenant/login",
+        data={"email": admin.email, "password": "SecretPass123!", "csrf_token": csrf},
+        follow_redirects=False,
+    )
+    assert login_resp.status_code == 303
+    session_cookie = client.cookies.get("session")
+
+    # Step 2: Dashboard is accessible with session
+    dash_resp = client.get("/tenant/dashboard")
+    assert dash_resp.status_code == 200
+
+    # Step 3: Admin changes password -> increments session_version in DB
+    settings_resp = client.get("/tenant/settings")
+    match = re.search(r'name="csrf_token"\s+value="([^"]+)"', settings_resp.text)
+    csrf_settings = match.group(1)
+
+    change_resp = client.post(
+        "/tenant/settings/password",
+        data={
+            "current_password": "SecretPass123!",
+            "new_password": "NewSecretPass456!",
+            "confirm_password": "NewSecretPass456!",
+            "csrf_token": csrf_settings,
+        },
+        follow_redirects=False,
+    )
+    assert change_resp.status_code == 303
+
+    # Step 4: A second client simulating another browser with the OLD session cookie
+    from starlette.testclient import TestClient
+    from saas.app import app
+    other_client = TestClient(app)
+    # Set old session cookie
+    other_client.cookies.set("session", session_cookie)
+
+    # Old session is now rejected because session_version does not match updated user.session_version
+    old_dash_resp = other_client.get("/tenant/dashboard", follow_redirects=False)
+    assert old_dash_resp.status_code == 303
+    assert old_dash_resp.headers["Location"].startswith("/tenant/login")
+
+
+def test_csrf_protection_on_cookie_authenticated_api_endpoint(client, db_session):
+    """Verifies that browser state changes to /api/ endpoints cannot bypass CSRF."""
+    tenant, admin = make_tenant(db_session, "Tenant CSRF API", "t-csrf-api")
+
+    # Log in to get session cookie
+    get_resp = client.get("/tenant/login")
+    match = re.search(r'name="csrf_token"\s+value="([^"]+)"', get_resp.text)
+    csrf = match.group(1)
+
+    login_resp = client.post(
+        "/tenant/login",
+        data={"email": admin.email, "password": "SecretPass123!", "csrf_token": csrf},
+        follow_redirects=False,
+    )
+    assert login_resp.status_code == 303
+
+    # State-changing POST to /api/tenant/routers with session cookie but NO CSRF token -> 403 Forbidden
+    forged_resp = client.post(
+        "/api/tenant/routers",
+        json={"name": "AttackerRouter"},
+    )
+    assert forged_resp.status_code == 403
+    assert "CSRF verification failed" in forged_resp.text
+
+    # State-changing POST with valid X-CSRF-Token header -> Succeeds
+    valid_resp = client.post(
+        "/api/tenant/routers",
+        json={"name": "LegitRouter"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert valid_resp.status_code == 201
+    assert valid_resp.json()["name"] == "LegitRouter"
+
+
+def test_router_api_requires_valid_router_token(client):
+    """Verifies that router endpoints require X-Router-Token and cannot be called unauthenticated."""
+    # POST to /api/router/sync with missing header
+    sync_resp = client.post("/api/router/sync")
+    assert sync_resp.status_code == 401
+
+    # POST to /api/router/ack with missing header
+    ack_resp = client.post("/api/router/ack")
+    assert ack_resp.status_code == 401
+
+
+def test_routeros_setup_script_structure_and_signature_check():
+    """Verifies the generated setup script includes the magic signature check and size limits."""
+    from saas.routers.tenant import _build_mikrotik_setup_script
+
+    script = _build_mikrotik_setup_script(
+        sync_url="https://cowen.vercel.app/api/router/sync",
+        raw_token="sec-token-12345",
+        router_name="Main-Core-Router",
+    )
+
+    # 1. Verification of HTTPS CA certificate prerequisite
+    assert "PREREQUISITE" in script
+    assert "cacert.pem" in script
+
+    # 2. Strict certificate checking
+    assert "check-certificate=yes-without-crl" in script
+
+    # 3. Status and magic signature verification before execution
+    assert '$status = \\"finished\\"' in script
+    assert '[:pick $body 0 16] = \\"# COwen-Batch-OK\\"' in script
+
+    # 4. Memory size boundaries
+    assert "[:len $body] <= 32768" in script
+
+    # 5. Safe execution wrapping
+    assert ":do {" in script
+    assert ":local run [:parse $body];" in script
+    assert "$run;" in script
+
