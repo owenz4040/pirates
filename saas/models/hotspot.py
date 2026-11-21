@@ -5,12 +5,16 @@ import enum
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from saas.database import SaasBase
 from saas.models.base import TenantScopedModel
+
+if TYPE_CHECKING:
+    from saas.models.router import Router
 
 
 class VoucherStatus(str, enum.Enum):
@@ -73,3 +77,48 @@ class HotspotPortalDesign(SaasBase, TenantScopedModel):
     is_default: Mapped[bool] = mapped_column(Boolean, default=True)
 
     deployments: Mapped[list["HotspotDeployment"]] = relationship(back_populates="portal_design")
+
+
+class HotspotNetwork(SaasBase, TenantScopedModel):
+    """Automatic MikroTik Hotspot Network configuration, bridge ports, wireless, and DHCP."""
+    __tablename__ = "saas_hotspot_networks"
+
+    router_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("saas_routers.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # Wireless Configuration
+    ssid: Mapped[str] = mapped_column(String(64), nullable=False, default="COwen WiFi")
+    wifi_security: Mapped[str] = mapped_column(String(32), default="open")  # open or wpa2-psk
+    wifi_password_encrypted: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    wireless_band: Mapped[str] = mapped_column(String(32), default="2ghz-b/g/n")
+    wireless_channel: Mapped[str] = mapped_column(String(32), default="auto")
+    wireless_country: Mapped[str] = mapped_column(String(32), default="no_country_set")
+    wlan_interface: Mapped[str | None] = mapped_column(String(32), default="wlan1")
+    include_wlan: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Bridge & Ethernet Configuration
+    bridge_name: Mapped[str] = mapped_column(String(32), default="COwen-Hotspot-Bridge")
+    ethernet_ports_json: Mapped[str] = mapped_column(String(255), default='["ether2","ether3","ether4"]')
+
+    # IP, DHCP & DNS Configuration
+    gateway_ip: Mapped[str] = mapped_column(String(32), default="10.5.50.1")
+    netmask: Mapped[str] = mapped_column(String(32), default="255.255.255.0")
+    network_cidr: Mapped[str] = mapped_column(String(32), default="10.5.50.0/24")
+    dhcp_pool_start: Mapped[str] = mapped_column(String(32), default="10.5.50.10")
+    dhcp_pool_end: Mapped[str] = mapped_column(String(32), default="10.5.50.250")
+    dns_name: Mapped[str] = mapped_column(String(64), default="login.hotspot")
+    dns_servers: Mapped[str] = mapped_column(String(128), default="10.5.50.1,8.8.8.8,1.1.1.1")
+
+    # Hotspot Server & Profile Configuration
+    server_name: Mapped[str] = mapped_column(String(32), default="COwen-Hotspot-Server")
+    server_profile_name: Mapped[str] = mapped_column(String(32), default="COwen-Hotspot-Profile")
+    html_directory: Mapped[str] = mapped_column(String(64), default="hotspot")
+
+    # Status: draft, queued, provisioned, failed
+    status: Mapped[str] = mapped_column(String(32), default="draft", index=True)
+
+    # Relationships
+    router: Mapped["Router"] = relationship()
+

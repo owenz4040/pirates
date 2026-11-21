@@ -42,3 +42,28 @@ def test_pricing_redirect(client):
     response = client.get("/pricing", follow_redirects=False)
     assert response.status_code == 302
     assert response.headers["location"] == "/#pricing"
+
+
+def test_marketing_navigation_sign_in_and_actions(client):
+    """Verifies PART A marketing navigation: Sign In button, Get Started button, and section anchors."""
+    response = client.get("/")
+    assert response.status_code == 200
+    html = response.text
+
+    # Brand
+    assert "COwen" in html
+    # Sign In linking to /tenant/login
+    assert 'href="/tenant/login"' in html
+    assert "Sign In" in html
+    # Get Started linking to /#pricing with arrow
+    assert 'href="/#pricing"' in html
+    assert "Get Started" in html
+    # Section anchors
+    assert 'href="/#features"' in html
+    assert 'href="/#how-it-works"' in html
+    assert 'href="/#pricing"' in html
+    assert 'href="/#faq"' in html
+    # Mobile drawer & toggle
+    assert 'id="mobileDrawer"' in html
+    assert "toggleMobileNav()" in html
+

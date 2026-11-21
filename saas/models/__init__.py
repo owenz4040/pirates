@@ -5,7 +5,7 @@ from saas.database import SaasBase
 from saas.models.audit import SuperadminAuditLog
 from saas.models.base import TenantScopedModel
 from saas.models.deployment import DeploymentStatus, HotspotDeployment
-from saas.models.hotspot import HotspotPackage, HotspotPortalDesign, HotspotVoucher, VoucherStatus
+from saas.models.hotspot import HotspotNetwork, HotspotPackage, HotspotPortalDesign, HotspotVoucher, VoucherStatus
 from saas.models.payments import CustomerPayment, PendingSubscriptionCheckout, SubscriptionTransaction, TenantPaymentConfig
 from saas.models.pppoe import ConnectionType, CustomerStatus, PPPoECustomer, PPPoEPlan
 from saas.models.router import Router, RouterCommand, RouterCommandStatus, RouterStatus
@@ -46,6 +46,7 @@ __all__ = [
     "HotspotPackage",
     "HotspotVoucher",
     "HotspotPortalDesign",
+    "HotspotNetwork",
     "VoucherStatus",
     "HotspotDeployment",
     "DeploymentStatus",

@@ -1276,6 +1276,216 @@ def test_cross_tenant_subscriber_router_collision(db_session):
     assert existing_on_router.id == sub1.id
 
 
+def test_hotspot_ssid_validation():
+    """Verifies that SSID input is validated against injection, dangerous characters, and length."""
+    import pytest
+    from saas.security.sanitizer import validate_ssid, validate_interface_name, CommandInjectionError
+
+    # Valid SSIDs
+    assert validate_ssid("Pirate's WiFi") == "Pirate's WiFi"
+    assert validate_ssid("COwen_Hotspot-2.4G") == "COwen_Hotspot-2.4G"
+    assert validate_ssid("Hotel Lounge Net") == "Hotel Lounge Net"
+
+    # Empty
+    with pytest.raises(CommandInjectionError):
+        validate_ssid("")
+    with pytest.raises(CommandInjectionError):
+        validate_ssid("   ")
+
+    # Exceeding 32 chars
+    with pytest.raises(CommandInjectionError):
+        validate_ssid("A" * 33)
+
+    # Shell injection characters
+    with pytest.raises(CommandInjectionError):
+        validate_ssid("WiFi; /system reboot")
+    with pytest.raises(CommandInjectionError):
+        validate_ssid('WiFi" [find]')
+    with pytest.raises(CommandInjectionError):
+        validate_ssid("WiFi$name")
+
+
+def test_hotspot_bridge_command_strictly_excludes_wan():
+    """Verifies that customer bridge creation excludes WAN interface ether1 even if submitted."""
+    from saas.security.sanitizer import build_hotspot_bridge_command
+
+    cmd = build_hotspot_bridge_command(
+        bridge_name="COwen-Hotspot-Bridge",
+        ethernet_ports=["ether1", "ether2", "ether3", "ether4"],
+        include_wlan=True,
+        wlan_iface="wlan1",
+        wan_iface="ether1",
+    )
+    assert 'add name="COwen-Hotspot-Bridge"' in cmd
+    assert 'interface="ether2"' in cmd
+    assert 'interface="ether3"' in cmd
+    assert 'interface="ether4"' in cmd
+    assert 'interface="wlan1"' in cmd
+    # Strictly ensure ether1 is NOT added to bridge
+    assert 'interface="ether1"' not in cmd
+
+
+def test_hotspot_wireless_command_open_vs_wpa2():
+    """Verifies RouterOS 6 and RouterOS 7 wireless configuration for Open and WPA2-PSK."""
+    from saas.security.sanitizer import build_hotspot_wireless_command
+
+    # Open network
+    cmd_open = build_hotspot_wireless_command(
+        ssid="Pirate's WiFi",
+        security_mode="open",
+        wlan_iface="wlan1",
+        is_ros7=False,
+    )
+    assert 'mode=none' in cmd_open
+    assert 'ssid="Pirate\'s WiFi"' in cmd_open
+    assert 'mode=ap-bridge' in cmd_open
+
+    # WPA2-PSK network on ROS7
+    cmd_wpa2_ros7 = build_hotspot_wireless_command(
+        ssid="Private-Hotspot",
+        security_mode="wpa2-psk",
+        password="SuperSecretPassword123!",
+        wlan_iface="wlan1",
+        is_ros7=True,
+    )
+    assert 'wpa2-pre-shared-key="SuperSecretPassword123!"' in cmd_wpa2_ros7
+    assert 'authentication-types=wpa2-psk' in cmd_wpa2_ros7
+    assert '/interface wifi' in cmd_wpa2_ros7
+
+
+def test_hotspot_provisioning_script_full_flow():
+    """Verifies the complete staged hotspot provisioning script assembly."""
+    from saas.security.sanitizer import build_complete_hotspot_provisioning_script
+
+    script = build_complete_hotspot_provisioning_script(
+        bridge_name="COwen-Hotspot-Bridge",
+        ethernet_ports=["ether2", "ether3", "ether4"],
+        ssid="Pirate's WiFi",
+        security_mode="open",
+        gateway_ip="10.5.50.1",
+        netmask="255.255.255.0",
+        network_cidr="10.5.50.0/24",
+        pool_start="10.5.50.10",
+        pool_end="10.5.50.250",
+        dns_name="login.hotspot",
+        include_wlan=True,
+        wlan_iface="wlan1",
+        is_ros7=False,
+    )
+    # Stage 1: Bridge
+    assert 'COwen-Hotspot-Bridge' in script
+    # Stage 2: Wireless
+    assert "Pirate's WiFi" in script
+    # Stage 3: IP, DHCP Pool, DNS
+    assert '10.5.50.1/24' in script
+    assert '10.5.50.10-10.5.50.250' in script
+    assert 'allow-remote-requests=yes' in script
+    # Stage 4: Server profile, Server, NAT
+    assert 'login.hotspot' in script
+    assert 'COwen-Hotspot-Server' in script
+    assert 'action=masquerade' in script
+
+
+def test_tenant_hotspot_network_provision_route(client, db_session):
+    """Verifies that submitting the Hotspot provision wizard creates a HotspotNetwork and queues a RouterCommand."""
+    from saas.models.tenant import Tenant, TenantStatus, TenantUser, UserRole
+    from saas.models.router import Router, RouterStatus, RouterCommand, RouterCommandStatus
+    from saas.models.hotspot import HotspotNetwork
+    from saas.security.auth import hash_password, hash_token
+    from sqlalchemy import select
+    from datetime import datetime, timezone
+
+    # Create tenant, user, and router
+    tenant = Tenant(name="Hotspot Test ISP", slug="hotspot-isp", contact_email="hotspot@test.com", contact_phone="+254700000003", status=TenantStatus.active)
+    db_session.add(tenant)
+    db_session.flush()
+
+    user = TenantUser(
+        tenant_id=tenant.id,
+        email="hotspot_admin@test.com",
+        full_name="Hotspot Admin",
+        hashed_password=hash_password("Pass1234!"),
+        role=UserRole.tenant_admin,
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.flush()
+
+    router = Router(
+        tenant_id=tenant.id,
+        name="hAP-Lite-Test",
+        token_hash=hash_token("router-secret-tok"),
+        status=RouterStatus.online,
+        board="RB941-2nD",
+        version="6.49.18",
+    )
+    db_session.add(router)
+    db_session.commit()
+
+    # Log in tenant
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    session_data = {
+        "user_id": user.id,
+        "tenant_user_id": user.id,
+        "tenant_login_time": now_ts,
+        "tenant_last_activity": now_ts,
+        "session_version": user.session_version,
+        "csrf_token": "valid-csrf-tok",
+    }
+
+    resp = client.post(
+        "/tenant/hotspot/network/provision",
+        data={
+            "csrf_token": "valid-csrf-tok",
+            "router_id": router.id,
+            "ssid": "Pirate's WiFi",
+            "wifi_security": "open",
+            "wireless_band": "2ghz-b/g/n",
+            "wireless_channel": "auto",
+            "wireless_country": "no_country_set",
+            "wlan_interface": "wlan1",
+            "include_wlan": "true",
+            "bridge_name": "COwen-Hotspot-Bridge",
+            "ethernet_ports": ["ether1", "ether2", "ether3", "ether4"],
+            "gateway_ip": "10.5.50.1",
+            "dhcp_pool_start": "10.5.50.10",
+            "dhcp_pool_end": "10.5.50.250",
+            "dns_name": "login.hotspot",
+        },
+        headers={"Authorization": f"Bearer {user.id}"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/tenant/hotspot"
+
+    # Verify HotspotNetwork record created
+    net = db_session.scalar(
+        select(HotspotNetwork).where(
+            HotspotNetwork.tenant_id == tenant.id,
+            HotspotNetwork.router_id == router.id,
+        )
+    )
+    assert net is not None
+    assert net.ssid == "Pirate's WiFi"
+    assert net.bridge_name == "COwen-Hotspot-Bridge"
+    assert "ether1" not in net.ethernet_ports_json
+    assert "ether2" in net.ethernet_ports_json
+
+    # Verify RouterCommand queued
+    cmd = db_session.scalar(
+        select(RouterCommand).where(
+            RouterCommand.tenant_id == tenant.id,
+            RouterCommand.router_id == router.id,
+        )
+    )
+    assert cmd is not None
+    assert cmd.status == RouterCommandStatus.pending
+    assert "Pirate's WiFi" in cmd.script
+    assert 'interface="ether1"' not in cmd.script
+
+
+
+
 
 
 

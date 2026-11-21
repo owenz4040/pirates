@@ -21,6 +21,7 @@ from saas.config import saas_settings
 from saas.database import get_saas_db
 from saas.models.deployment import DeploymentStatus, HotspotDeployment
 from saas.models.hotspot import (
+    HotspotNetwork,
     HotspotPackage,
     HotspotPortalDesign,
     HotspotVoucher,
@@ -66,6 +67,7 @@ from saas.security.rate_limit import (
 )
 from saas.security.sanitizer import (
     CommandInjectionError,
+    build_complete_hotspot_provisioning_script,
     build_hotspot_profile_command,
     build_hotspot_user_command,
     build_mikrotik_rsc_file,
@@ -77,11 +79,13 @@ from saas.security.sanitizer import (
     build_pppoe_profile_command,
     build_pppoe_secret_command,
     quote_routeros,
+    validate_interface_name,
     validate_package_name,
     validate_password,
     validate_plan_name,
     validate_pppoe_username,
     validate_rate_limit,
+    validate_ssid,
 )
 
 logger = logging.getLogger("saas.tenant")
@@ -1148,6 +1152,12 @@ def tenant_hotspot_page(
         db.commit()
         db.refresh(portal)
 
+    networks = db.scalars(
+        select(HotspotNetwork)
+        .where(HotspotNetwork.tenant_id == tenant_id)
+        .order_by(HotspotNetwork.created_at.desc())
+    ).all()
+
     return templates.TemplateResponse(
         request=request,
         name="tenant/hotspot.html",
@@ -1158,6 +1168,7 @@ def tenant_hotspot_page(
             "vouchers": vouchers,
             "routers": routers,
             "portal": portal,
+            "networks": networks,
             "batch_filter": batch_filter,
             "msg": msg,
             "error": error,
@@ -1338,6 +1349,155 @@ def tenant_hotspot_portal_save(
 
     db.commit()
     set_flash(request, msg="Captive portal branding updated successfully.")
+    return RedirectResponse(url="/tenant/hotspot", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@tenant_router.post("/tenant/hotspot/network/provision", dependencies=[Depends(verify_csrf_token)])
+def tenant_hotspot_network_provision(
+    request: Request,
+    router_id: str = Form(...),
+    ssid: str = Form(...),
+    wifi_security: str = Form("open"),
+    wifi_password: str | None = Form(None),
+    wireless_band: str = Form("2ghz-b/g/n"),
+    wireless_channel: str = Form("auto"),
+    wireless_country: str = Form("no_country_set"),
+    wlan_interface: str = Form("wlan1"),
+    include_wlan: bool = Form(True),
+    bridge_name: str = Form("COwen-Hotspot-Bridge"),
+    ethernet_ports: list[str] = Form(None),
+    gateway_ip: str = Form("10.5.50.1"),
+    dhcp_pool_start: str = Form("10.5.50.10"),
+    dhcp_pool_end: str = Form("10.5.50.250"),
+    dns_name: str = Form("login.hotspot"),
+    context: TenantContext = Depends(require_tenant_context),
+    db: Session = Depends(get_saas_db),
+):
+    """Provisions or updates a complete Hotspot network on a MikroTik router via outbound pull queue."""
+    import json
+    tenant_id = context.tenant.id
+    router = db.scalar(
+        select(Router).where(Router.id == router_id, Router.tenant_id == tenant_id)
+    )
+    if not router:
+        set_flash(request, error="Selected router not found or not owned by your tenant.")
+        return RedirectResponse(url="/tenant/hotspot", status_code=status.HTTP_303_SEE_OTHER)
+
+    try:
+        clean_ssid = validate_ssid(ssid)
+        clean_bridge = validate_interface_name(bridge_name)
+        clean_wlan = validate_interface_name(wlan_interface) if (include_wlan and wlan_interface) else "wlan1"
+    except CommandInjectionError as e:
+        set_flash(request, error=f"Validation failed: {e}")
+        return RedirectResponse(url="/tenant/hotspot", status_code=status.HTTP_303_SEE_OTHER)
+
+    # Process Ethernet ports - strictly ensure WAN port ether1 is never included
+    active_ports: list[str] = []
+    if ethernet_ports:
+        for p in ethernet_ports:
+            p_clean = p.strip()
+            if p_clean.lower() == "ether1":
+                continue  # Strictly exclude WAN
+            try:
+                active_ports.append(validate_interface_name(p_clean))
+            except CommandInjectionError:
+                pass
+    if not active_ports:
+        active_ports = ["ether2", "ether3", "ether4"]
+
+    # Security profile check
+    clean_sec = wifi_security.strip().lower()
+    if clean_sec not in ("open", "wpa2-psk"):
+        clean_sec = "open"
+
+    clean_pass = None
+    if clean_sec == "wpa2-psk":
+        if not wifi_password or len(wifi_password.strip()) < 8:
+            set_flash(request, error="WPA2-PSK requires a password of at least 8 characters.")
+            return RedirectResponse(url="/tenant/hotspot", status_code=status.HTTP_303_SEE_OTHER)
+        clean_pass = wifi_password.strip()
+
+    is_ros7 = bool(router.version and router.version.strip().startswith("7"))
+
+    # Compute network CIDR from gateway IP (defaulting /24)
+    gw_parts = gateway_ip.strip().split(".")
+    net_cidr = f"{gw_parts[0]}.{gw_parts[1]}.{gw_parts[2]}.0/24" if len(gw_parts) == 4 else "10.5.50.0/24"
+
+    # Build provisioning script
+    script = build_complete_hotspot_provisioning_script(
+        bridge_name=clean_bridge,
+        ethernet_ports=active_ports,
+        ssid=clean_ssid,
+        security_mode=clean_sec,
+        password=clean_pass,
+        gateway_ip=gateway_ip.strip(),
+        network_cidr=net_cidr,
+        pool_start=dhcp_pool_start.strip(),
+        pool_end=dhcp_pool_end.strip(),
+        dns_name=dns_name.strip(),
+        include_wlan=include_wlan,
+        wlan_iface=clean_wlan,
+        is_ros7=is_ros7,
+    )
+
+    # Create or update HotspotNetwork record
+    net_record = db.scalar(
+        select(HotspotNetwork).where(
+            HotspotNetwork.tenant_id == tenant_id,
+            HotspotNetwork.router_id == router.id,
+        )
+    )
+    if not net_record:
+        net_record = HotspotNetwork(
+            tenant_id=tenant_id,
+            router_id=router.id,
+            name=f"{clean_ssid} Network",
+            ssid=clean_ssid,
+            wifi_security=clean_sec,
+            wireless_band=wireless_band.strip(),
+            wireless_channel=wireless_channel.strip(),
+            wireless_country=wireless_country.strip(),
+            wlan_interface=clean_wlan,
+            include_wlan=include_wlan,
+            bridge_name=clean_bridge,
+            ethernet_ports_json=json.dumps(active_ports),
+            gateway_ip=gateway_ip.strip(),
+            network_cidr=net_cidr,
+            dhcp_pool_start=dhcp_pool_start.strip(),
+            dhcp_pool_end=dhcp_pool_end.strip(),
+            dns_name=dns_name.strip(),
+            status="queued",
+        )
+        db.add(net_record)
+    else:
+        net_record.ssid = clean_ssid
+        net_record.wifi_security = clean_sec
+        net_record.wireless_band = wireless_band.strip()
+        net_record.wireless_channel = wireless_channel.strip()
+        net_record.wireless_country = wireless_country.strip()
+        net_record.wlan_interface = clean_wlan
+        net_record.include_wlan = include_wlan
+        net_record.bridge_name = clean_bridge
+        net_record.ethernet_ports_json = json.dumps(active_ports)
+        net_record.gateway_ip = gateway_ip.strip()
+        net_record.network_cidr = net_cidr
+        net_record.dhcp_pool_start = dhcp_pool_start.strip()
+        net_record.dhcp_pool_end = dhcp_pool_end.strip()
+        net_record.dns_name = dns_name.strip()
+        net_record.status = "queued"
+
+    # Queue RouterCommand
+    cmd = RouterCommand(
+        tenant_id=tenant_id,
+        router_id=router.id,
+        description=f"Provision Hotspot Network: '{clean_ssid}' on {clean_bridge} ({gateway_ip.strip()}/24)",
+        script=script,
+        status=RouterCommandStatus.pending,
+    )
+    db.add(cmd)
+    db.commit()
+
+    set_flash(request, msg=f"Hotspot network provisioning for '{clean_ssid}' successfully queued for router '{router.name}'.")
     return RedirectResponse(url="/tenant/hotspot", status_code=status.HTTP_303_SEE_OTHER)
 
 
