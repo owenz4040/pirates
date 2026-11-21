@@ -19,6 +19,7 @@ from saas.models.router import Router, RouterStatus
 from saas.routers.marketing import marketing_router
 from saas.routers.onboarding import onboarding_router
 from saas.routers.superadmin import superadmin_router
+from saas.routers.tenant import tenant_router
 from saas.security.auth import generate_secure_token, hash_token
 from saas.security.bootstrap import bootstrap_superadmin
 from saas.security.context import (
@@ -81,6 +82,7 @@ async def subscription_limit_handler(request: Request, exc: SubscriptionLimitExc
 app.include_router(marketing_router)
 app.include_router(onboarding_router)
 app.include_router(superadmin_router)
+app.include_router(tenant_router)
 
 
 # ---------------------------------------------------------

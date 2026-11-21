@@ -1,0 +1,160 @@
+{% extends "tenant/base.html" %}
+
+{% block title %}Revenue Reports — {{ tenant.name }}{% endblock %}
+{% block page_title %}Financial Analytics & Revenue Breakdown{% endblock %}
+
+{% block content %}
+<!-- Top Metrics Cards -->
+<div class="grid-4">
+  <div class="stat-card">
+    <div class="stat-label">Total All-Time Revenue</div>
+    <div class="stat-value" style="color: var(--gold);">KES {{ "{:,.2f}".format(all_time_revenue) }}</div>
+    <div class="stat-sub">From subscriber payments</div>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-label">Current Month Revenue</div>
+    <div class="stat-value" style="color: var(--green);">KES {{ "{:,.2f}".format(this_month_revenue) }}</div>
+    <div class="stat-sub">This calendar month</div>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-label">PPPoE Revenue</div>
+    <div class="stat-value">KES {{ "{:,.2f}".format(pppoe_total) }}</div>
+    <div class="stat-sub">Monthly plan subscriptions</div>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-label">Hotspot Revenue</div>
+    <div class="stat-value">KES {{ "{:,.2f}".format(hotspot_total) }}</div>
+    <div class="stat-sub">WiFi voucher purchases</div>
+  </div>
+</div>
+
+<div class="grid-2">
+
+  <!-- Gateway Breakdown -->
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Revenue by Gateway</div>
+        <div class="card-desc">Collection channels utilized by your customers</div>
+      </div>
+    </div>
+
+    {% if gateway_breakdown %}
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Payment Method</th>
+            <th>Transactions</th>
+            <th>Total Collected</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for g in gateway_breakdown %}
+          <tr>
+            <td style="font-weight: 600; color: #fff;">
+              <span class="badge badge-gold">{{ g.gateway | upper }}</span>
+            </td>
+            <td>{{ g.count }} txn{{ "s" if g.count > 1 else "" }}</td>
+            <td style="font-weight: 700; color: var(--gold);">KES {{ "{:,.2f}".format(g.total) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state" style="padding: 24px;">
+      <div class="empty-title">No Completed Transactions</div>
+      <div class="empty-text">Transactions will be aggregated here once customers complete payments.</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Accounting Architecture & Separation -->
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Accounting Isolation Guarantee</div>
+        <div class="card-desc">Multi-tenant financial security</div>
+      </div>
+    </div>
+
+    <div style="font-size: 13px; color: var(--text-muted); line-height: 1.6;">
+      <p style="margin-bottom: 12px;">
+        ✅ <strong>Direct Settlement:</strong> All customer payments are processed through your own M-Pesa Paybill/Till or Paystack accounts. Funds are never routed through platform escrow.
+      </p>
+      <p style="margin-bottom: 12px;">
+        ✅ <strong>Strict Revenue Separation:</strong> Platform subscription billing fees (your payments to COwen ISP SaaS) are tracked in separate administrative ledgers and never mixed with your ISP customer collections.
+      </p>
+      <p>
+        ✅ <strong>Data Boundary:</strong> All reports query <code style="font-family: 'JetBrains Mono', monospace; color: var(--gold);">saas_customer_payments</code> scoped exclusively to your <code style="font-family: 'JetBrains Mono', monospace; color: var(--gold);">tenant_id</code>.
+      </p>
+    </div>
+  </div>
+
+</div>
+
+<!-- Recent Transactions -->
+<div class="card">
+  <div class="card-header">
+    <div>
+      <div class="card-title">Audited Customer Transactions (Last 20)</div>
+      <div class="card-desc">Immutable payment records</div>
+    </div>
+  </div>
+
+  {% if recent_transactions %}
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>Reference</th>
+          <th>Service Type</th>
+          <th>Gateway</th>
+          <th>Payer Phone</th>
+          <th>Amount</th>
+          <th>Status</th>
+          <th>Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in recent_transactions %}
+        <tr>
+          <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--gold);">{{ p.reference }}</td>
+          <td>
+            {% if p.customer_id %}
+            <span>PPPoE Plan</span>
+            {% elif p.voucher_id %}
+            <span>Hotspot Voucher</span>
+            {% else %}
+            <span>General</span>
+            {% endif %}
+          </td>
+          <td><span class="badge badge-gold">{{ p.gateway | upper }}</span></td>
+          <td>{{ p.phone_number or "—" }}</td>
+          <td style="font-weight: 700; color: #fff;">KES {{ "{:,.2f}".format(p.amount_kes) }}</td>
+          <td>
+            {% if p.status == 'completed' %}
+            <span class="badge badge-online">Paid</span>
+            {% else %}
+            <span class="badge badge-provisioning">{{ p.status }}</span>
+            {% endif %}
+          </td>
+          <td style="font-size: 12px; color: var(--text-dim);">{{ p.created_at.strftime('%Y-%m-%d %H:%M') if p.created_at else '' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-icon">📊</div>
+    <div class="empty-title">No Transactions Recorded</div>
+    <div class="empty-text">When customers purchase vouchers or settle their accounts, detailed receipts will appear here.</div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

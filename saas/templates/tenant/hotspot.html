@@ -1,0 +1,266 @@
+{% extends "tenant/base.html" %}
+
+{% block title %}Hotspot & Vouchers — {{ tenant.name }}{% endblock %}
+{% block page_title %}Hotspot Packages, Voucher Batches & Portal Branding{% endblock %}
+
+{% block content %}
+<div class="grid-2">
+
+  <!-- Left: Packages & Batch Generation -->
+  <div>
+    <!-- Packages Card -->
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">Hotspot Pricing Packages</div>
+          <div class="card-desc">Duration and bandwidth packages for voucher generation</div>
+        </div>
+        <button type="button" class="btn btn-secondary" onclick="toggleModal('modalPackage')">+ New Package</button>
+      </div>
+
+      {% if packages %}
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Package Name</th>
+              <th>Duration</th>
+              <th>Speed Limit</th>
+              <th>Price</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for pkg in packages %}
+            <tr>
+              <td style="font-weight: 600; color: #fff;">{{ pkg.name }}</td>
+              <td>
+                {% if pkg.duration_minutes >= 1440 %}
+                {{ (pkg.duration_minutes / 1440) | int }} Day(s)
+                {% elif pkg.duration_minutes >= 60 %}
+                {{ (pkg.duration_minutes / 60) | int }} Hour(s)
+                {% else %}
+                {{ pkg.duration_minutes }} Min
+                {% endif %}
+              </td>
+              <td><span class="badge badge-gold">{{ pkg.rate_limit }}</span></td>
+              <td style="font-weight: 600; color: var(--gold);">KES {{ "{:,.2f}".format(pkg.price_kes) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty-state" style="padding: 20px;">
+        <div class="empty-title">No Hotspot Packages Yet</div>
+        <div class="empty-text">Add packages like "1 Hour - KES 20" or "24 Hours - KES 100".</div>
+        <button type="button" class="btn btn-gold" onclick="toggleModal('modalPackage')">+ Create First Package</button>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Voucher Batch Generator Card -->
+    <div class="card">
+      <div class="card-title" style="margin-bottom: 6px;">Batch Voucher Generator</div>
+      <div class="card-desc" style="margin-bottom: 18px;">Generate batches of unique access codes ready for printing or direct sale</div>
+
+      <form method="post" action="/tenant/hotspot/vouchers/generate">
+        <div class="form-group">
+          <label class="form-label">Select Package *</label>
+          <select name="package_id" class="form-control" required>
+            {% for pkg in packages %}
+            <option value="{{ pkg.id }}">{{ pkg.name }} — KES {{ "{:,.2f}".format(pkg.price_kes) }}</option>
+            {% endfor %}
+          </select>
+          {% if not packages %}
+          <div style="font-size: 11px; color: var(--amber); margin-top: 4px;">* Create a package above before generating vouchers.</div>
+          {% endif %}
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div class="form-group">
+            <label class="form-label">Quantity to Generate *</label>
+            <select name="quantity" class="form-control">
+              <option value="10">10 Vouchers</option>
+              <option value="25" selected>25 Vouchers</option>
+              <option value="50">50 Vouchers</option>
+              <option value="100">100 Vouchers</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Target Router (Optional)</label>
+            <select name="router_id" class="form-control">
+              <option value="">Sync to All Routers</option>
+              {% for r in routers %}
+              <option value="{{ r.id }}">{{ r.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-gold" style="width: 100%; margin-top: 8px;" {% if not packages %}disabled{% endif %}>
+          Generate Batch & Queue Sync →
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Right: Captive Portal Design Customizer -->
+  <div>
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">Captive Portal Branding</div>
+          <div class="card-desc">White-label login page shown to users connecting to your hotspot</div>
+        </div>
+        <span class="badge badge-gold">v{{ portal.version }}</span>
+      </div>
+
+      <form method="post" action="/tenant/hotspot/portal/save">
+        <div class="form-group">
+          <label class="form-label">Brand / Network Display Name *</label>
+          <input type="text" name="brand_name" class="form-control" value="{{ portal.brand_name }}" required>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Welcome Headline</label>
+          <input type="text" name="headline" class="form-control" value="{{ portal.headline }}">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Brand Logo URL</label>
+          <input type="url" name="logo_url" class="form-control" value="{{ portal.logo_url or '' }}" placeholder="https://yourisp.com/logo.png">
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div class="form-group">
+            <label class="form-label">Primary Brand Color</label>
+            <input type="color" name="primary_color" class="form-control" value="{{ portal.primary_color }}" style="height: 42px; padding: 4px;">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Accent Color</label>
+            <input type="color" name="accent_color" class="form-control" value="{{ portal.accent_color }}" style="height: 42px; padding: 4px;">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Custom Banner HTML / Announcement (Optional)</label>
+          <textarea name="banner_html" class="form-control" rows="3" placeholder="<p>Special Weekend Offer: Double speed on all passes!</p>">{{ portal.banner_html or '' }}</textarea>
+        </div>
+
+        <button type="submit" class="btn btn-secondary" style="width: 100%;">Save Portal Branding</button>
+      </form>
+    </div>
+  </div>
+
+</div>
+
+<!-- Recent Vouchers List -->
+<div class="card">
+  <div class="card-header">
+    <div>
+      <div class="card-title">
+        Generated Vouchers 
+        {% if batch_filter %}
+        <span style="font-size: 13px; font-weight: normal; color: var(--gold);">(Batch: {{ batch_filter }})</span>
+        {% endif %}
+      </div>
+      <div class="card-desc">Real-time status of generated hotspot access codes</div>
+    </div>
+    {% if batch_filter %}
+    <a href="/tenant/hotspot" class="btn btn-secondary" style="font-size: 12px;">Show All Batches</a>
+    {% endif %}
+  </div>
+
+  {% if vouchers %}
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>Voucher Code</th>
+          <th>Package</th>
+          <th>Batch ID</th>
+          <th>Status</th>
+          <th>Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for v in vouchers %}
+        <tr>
+          <td style="font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 700; color: var(--gold);">
+            {{ v.code }}
+          </td>
+          <td style="color: #fff; font-weight: 500;">{{ v.package.name if v.package else "N/A" }}</td>
+          <td>
+            <a href="/tenant/hotspot?batch_filter={{ v.batch_id }}" style="font-family: 'JetBrains Mono', monospace; font-size: 11px;">
+              {{ v.batch_id or "—" }}
+            </a>
+          </td>
+          <td>
+            {% if v.status.value == 'unused' %}
+            <span class="badge badge-online">Ready / Unused</span>
+            {% elif v.status.value == 'active' %}
+            <span class="badge badge-provisioning">In Use</span>
+            {% elif v.status.value == 'used' %}
+            <span class="badge badge-offline">Completed</span>
+            {% else %}
+            <span class="badge badge-offline">Expired</span>
+            {% endif %}
+          </td>
+          <td style="color: var(--text-dim); font-size: 12px;">{{ v.created_at.strftime('%b %d, %H:%M') if v.created_at else '' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-icon">🎟️</div>
+    <div class="empty-title">No Vouchers Generated Yet</div>
+    <div class="empty-text">Use the batch generator above to produce your first set of hotspot cards.</div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Modal: New Package -->
+<div id="modalPackage" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 200; align-items: center; justify-content: center; backdrop-filter: blur(4px);">
+  <div class="card" style="width: 100%; max-width: 480px; margin: 20px;">
+    <div class="card-header">
+      <div class="card-title">Create Hotspot Package</div>
+      <button type="button" onclick="toggleModal('modalPackage')" style="background: none; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer;">✕</button>
+    </div>
+    <form method="post" action="/tenant/hotspot/packages/add">
+      <div class="form-group">
+        <label class="form-label">Package Name *</label>
+        <input type="text" name="name" class="form-control" placeholder="e.g. 1 Hour Unlimited" required>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div class="form-group">
+          <label class="form-label">Duration (Minutes) *</label>
+          <input type="number" name="duration_minutes" class="form-control" placeholder="60" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Price (KES) *</label>
+          <input type="number" step="0.01" name="price_kes" class="form-control" placeholder="20" required>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Rate Limit</label>
+        <input type="text" name="rate_limit" class="form-control" value="5M/10M" required>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;">
+        <button type="button" class="btn btn-secondary" onclick="toggleModal('modalPackage')">Cancel</button>
+        <button type="submit" class="btn btn-gold">Save Package</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleModal(modalId) {
+  const el = document.getElementById(modalId);
+  el.style.display = (el.style.display === 'none' || el.style.display === '') ? 'flex' : 'none';
+}
+</script>
+{% endblock %}

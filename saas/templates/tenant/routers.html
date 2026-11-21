@@ -1,0 +1,144 @@
+{% extends "tenant/base.html" %}
+
+{% block title %}MikroTik Routers — {{ tenant.name }}{% endblock %}
+{% block page_title %}MikroTik Router Fleet Management{% endblock %}
+
+{% block content %}
+<div class="card" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px;">
+  <div>
+    <div class="card-title">Connected Router Fleet</div>
+    <div class="card-desc">
+      Your plan allows up to <strong>{{ max_routers }}</strong> active router{{ "s" if max_routers > 1 else "" }}. 
+      Currently utilizing <strong>{{ current_count }}</strong> of {{ max_routers }}.
+    </div>
+  </div>
+  {% if can_add %}
+  <a href="/tenant/routers/add" class="btn btn-gold">+ Connect New Router</a>
+  {% else %}
+  <div style="display: flex; gap: 12px; align-items: center;">
+    <span class="badge badge-provisioning">Plan Limit Reached</span>
+    <a href="/checkout?plan=growth" class="btn btn-secondary">Upgrade Plan</a>
+  </div>
+  {% endif %}
+</div>
+
+{% if routers %}
+<div class="card">
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>Router Name & Location</th>
+          <th>Status</th>
+          <th>Hardware & Version</th>
+          <th>CPU & Uptime</th>
+          <th>Last Heartbeat</th>
+          <th style="text-align: right;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in routers %}
+        <tr>
+          <td>
+            <div style="font-weight: 600; color: #fff; font-size: 14px;">{{ r.name }}</div>
+            <div style="font-size: 12px; color: var(--text-dim);">
+              {{ r.location or "No location specified" }} 
+              {% if r.ip_address %} • IP: {{ r.ip_address }}{% endif %}
+            </div>
+          </td>
+          <td>
+            {% if r.status.value == 'online' %}
+            <span class="badge badge-online">● Online</span>
+            {% elif r.status.value == 'provisioning' %}
+            <span class="badge badge-provisioning">● Provisioning</span>
+            {% elif r.status.value == 'suspended' %}
+            <span class="badge badge-offline">● Suspended</span>
+            {% else %}
+            <span class="badge badge-offline">● Offline</span>
+            {% endif %}
+          </td>
+          <td>
+            <div style="color: #fff; font-weight: 500;">{{ r.board or "MikroTik RouterBoard" }}</div>
+            <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-dim);">
+              OS: {{ r.version or "Pending first sync" }}
+            </div>
+          </td>
+          <td>
+            {% if r.cpu_load is not none %}
+            <div>CPU: <strong style="color: #fff;">{{ r.cpu_load }}%</strong></div>
+            <div style="font-size: 11px; color: var(--text-dim);">Up: {{ r.uptime or "N/A" }}</div>
+            {% else %}
+            <span style="color: var(--text-dim); font-size: 12px;">No telemetry yet</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if r.last_seen_at %}
+            <span style="font-size: 12px; color: var(--text-muted);">{{ r.last_seen_at.strftime('%b %d, %H:%M:%S') }}</span>
+            {% else %}
+            <span style="color: var(--amber); font-size: 12px;">Awaiting First Sync</span>
+            {% endif %}
+          </td>
+          <td style="text-align: right;">
+            <div style="display: inline-flex; gap: 8px;">
+              <!-- Rename Modal Trigger / Form -->
+              <button type="button" class="btn btn-secondary" style="padding: 6px 12px; font-size: 11px;" onclick="promptRename('{{ r.id }}', '{{ r.name }}')">
+                Rename
+              </button>
+              {% if r.status.value != 'suspended' %}
+              <form method="post" action="/tenant/routers/{{ r.id }}/deactivate" style="display: inline;" onsubmit="return confirm('Suspend router sync for {{ r.name }}?');">
+                <button type="submit" class="btn btn-danger" style="padding: 6px 12px; font-size: 11px;">
+                  Suspend
+                </button>
+              </form>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="card">
+  <div class="empty-state">
+    <div class="empty-icon">📡</div>
+    <div class="empty-title">No Routers Connected Yet</div>
+    <div class="empty-text">
+      Connect your first MikroTik RouterOS device using our outbound HTTPS synchronization architecture. 
+      Works behind CGNAT, Starlink, and dynamic IPs without opening ports.
+    </div>
+    <a href="/tenant/routers/add" class="btn btn-gold">+ Connect MikroTik Router</a>
+  </div>
+</div>
+{% endif %}
+
+<div class="card" style="border-left: 3px solid var(--gold);">
+  <div class="card-title" style="font-size: 14px; margin-bottom: 6px;">Outbound HTTPS Synchronization Architecture</div>
+  <p style="font-size: 13px; color: var(--text-muted); line-height: 1.5;">
+    Our MikroTik integration uses outbound HTTPS polling over standard port 443 via RouterOS <code style="color: var(--gold); font-family: 'JetBrains Mono', monospace;">/tool fetch</code>. 
+    Your routers pull pending provisioning commands and report CPU/uptime telemetry every 60 seconds. 
+    <strong>No public static IP, port forwarding, or firewall alterations are required.</strong>
+  </p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function promptRename(routerId, currentName) {
+  const newName = prompt("Enter new name for router:", currentName);
+  if (newName && newName.trim() && newName.trim() !== currentName) {
+    const form = document.createElement("form");
+    form.method = "POST";
+    form.action = `/tenant/routers/${routerId}/rename`;
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = "name";
+    input.value = newName.trim();
+    form.appendChild(input);
+    document.body.appendChild(form);
+    form.submit();
+  }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,224 @@
+{% extends "tenant/base.html" %}
+
+{% block title %}PPPoE Subscribers — {{ tenant.name }}{% endblock %}
+{% block page_title %}PPPoE & Static Bandwidth Management{% endblock %}
+
+{% block content %}
+<!-- Top Action Bar -->
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 12px;">
+  <div>
+    <div style="font-size: 16px; font-weight: 600; color: #fff;">Speed Tiers & Subscribers</div>
+    <div style="font-size: 13px; color: var(--text-muted);">Manage bandwidth profiles and customer PPPoE credentials</div>
+  </div>
+  <div style="display: flex; gap: 12px;">
+    <button type="button" class="btn btn-secondary" onclick="toggleModal('modalPlan')">+ New Speed Plan</button>
+    <button type="button" class="btn btn-gold" onclick="toggleModal('modalSubscriber')">+ Add Subscriber</button>
+  </div>
+</div>
+
+<!-- Speed Plans Row -->
+<div class="card">
+  <div class="card-header">
+    <div>
+      <div class="card-title">Configured Speed Plans</div>
+      <div class="card-desc">Bandwidth limits and pricing profiles</div>
+    </div>
+  </div>
+
+  {% if plans %}
+  <div class="grid-4" style="margin-bottom: 0;">
+    {% for plan in plans %}
+    <div style="background: rgba(10, 12, 18, 0.6); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px;">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+        <span style="font-size: 14px; font-weight: 700; color: #fff;">{{ plan.name }}</span>
+        <span class="badge badge-gold">{{ plan.rate_limit }}</span>
+      </div>
+      <div style="font-size: 20px; font-weight: 700; color: var(--gold);">KES {{ "{:,.2f}".format(plan.price_kes) }}</div>
+      <div style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">{{ plan.duration_days }} days validity</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state" style="padding: 24px;">
+    <div class="empty-title">No Speed Plans Defined</div>
+    <div class="empty-text">Create your first bandwidth profile (e.g., "10 Mbps Home - KES 2,500").</div>
+    <button type="button" class="btn btn-gold" onclick="toggleModal('modalPlan')">+ Create First Plan</button>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Subscribers Directory -->
+<div class="card">
+  <div class="card-header">
+    <div>
+      <div class="card-title">Customer Directory ({{ subscribers | length }})</div>
+      <div class="card-desc">Active, suspended, and expired subscriber accounts</div>
+    </div>
+  </div>
+
+  {% if subscribers %}
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>Customer Name</th>
+          <th>PPPoE Username</th>
+          <th>Plan & Speed</th>
+          <th>Contact</th>
+          <th>Status</th>
+          <th>Expires</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in subscribers %}
+        <tr>
+          <td>
+            <div style="font-weight: 600; color: #fff;">{{ s.full_name }}</div>
+            <div style="font-size: 11px; color: var(--text-dim);">Type: {{ s.connection_type.value | upper }}</div>
+          </td>
+          <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--gold);">
+            {{ s.username }}
+          </td>
+          <td>
+            <div style="font-weight: 500; color: #fff;">{{ s.plan.name if s.plan else "N/A" }}</div>
+            <div style="font-size: 11px; color: var(--text-dim);">{{ s.plan.rate_limit if s.plan else "" }}</div>
+          </td>
+          <td>
+            <div>{{ s.phone_number or "—" }}</div>
+            <div style="font-size: 11px; color: var(--text-dim);">{{ s.email or "" }}</div>
+          </td>
+          <td>
+            {% if s.status.value == 'active' %}
+            <span class="badge badge-online">● Active</span>
+            {% elif s.status.value == 'suspended' %}
+            <span class="badge badge-provisioning">● Suspended</span>
+            {% else %}
+            <span class="badge badge-offline">● Expired</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if s.expires_at %}
+            <span style="font-size: 12px; color: var(--text-muted);">{{ s.expires_at.strftime('%b %d, %Y') }}</span>
+            {% else %}
+            <span style="font-size: 12px; color: var(--text-dim);">Unlimited</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-icon">🔌</div>
+    <div class="empty-title">No PPPoE Subscribers Registered</div>
+    <div class="empty-text">Add your first subscriber. Credentials will be automatically pushed to your connected MikroTik router.</div>
+    <button type="button" class="btn btn-gold" onclick="toggleModal('modalSubscriber')">+ Add First Subscriber</button>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Modal: New Speed Plan -->
+<div id="modalPlan" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 200; align-items: center; justify-content: center; backdrop-filter: blur(4px);">
+  <div class="card" style="width: 100%; max-width: 480px; margin: 20px;">
+    <div class="card-header">
+      <div class="card-title">Create Speed Plan</div>
+      <button type="button" onclick="toggleModal('modalPlan')" style="background: none; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer;">✕</button>
+    </div>
+    <form method="post" action="/tenant/pppoe/plans/add">
+      <div class="form-group">
+        <label class="form-label">Plan Name *</label>
+        <input type="text" name="name" class="form-control" placeholder="e.g. 10 Mbps Residential" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label">MikroTik Rate Limit *</label>
+        <input type="text" name="rate_limit" class="form-control" placeholder="e.g. 10M/10M or 5M/20M" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Price (KES) *</label>
+        <input type="number" step="0.01" name="price_kes" class="form-control" placeholder="2500" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Duration (Days)</label>
+        <input type="number" name="duration_days" class="form-control" value="30" required>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;">
+        <button type="button" class="btn btn-secondary" onclick="toggleModal('modalPlan')">Cancel</button>
+        <button type="submit" class="btn btn-gold">Save Plan</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal: New Subscriber -->
+<div id="modalSubscriber" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 200; align-items: center; justify-content: center; backdrop-filter: blur(4px);">
+  <div class="card" style="width: 100%; max-width: 540px; margin: 20px;">
+    <div class="card-header">
+      <div class="card-title">Add PPPoE Subscriber</div>
+      <button type="button" onclick="toggleModal('modalSubscriber')" style="background: none; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer;">✕</button>
+    </div>
+    <form method="post" action="/tenant/pppoe/subscribers/add">
+      <div class="form-group">
+        <label class="form-label">Assigned MikroTik Router *</label>
+        <select name="router_id" class="form-control" required>
+          {% for r in routers %}
+          <option value="{{ r.id }}">{{ r.name }} ({{ r.location or "PoP" }})</option>
+          {% endfor %}
+        </select>
+        {% if not routers %}
+        <div style="font-size: 11px; color: var(--red); margin-top: 4px;">* Connect a router first before adding subscribers.</div>
+        {% endif %}
+      </div>
+      <div class="form-group">
+        <label class="form-label">Bandwidth Plan *</label>
+        <select name="plan_id" class="form-control" required>
+          {% for p in plans %}
+          <option value="{{ p.id }}">{{ p.name }} — KES {{ "{:,.2f}".format(p.price_kes) }} ({{ p.rate_limit }})</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div class="form-group">
+          <label class="form-label">PPPoE Username *</label>
+          <input type="text" name="username" class="form-control" placeholder="john_doe" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">PPPoE Password *</label>
+          <input type="text" name="password" class="form-control" placeholder="Secret123" required>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Customer Full Name *</label>
+        <input type="text" name="full_name" class="form-control" placeholder="John Doe" required>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div class="form-group">
+          <label class="form-label">Phone Number</label>
+          <input type="text" name="phone_number" class="form-control" placeholder="254712345678">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Email Address</label>
+          <input type="email" name="email" class="form-control" placeholder="john@example.com">
+        </div>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;">
+        <button type="button" class="btn btn-secondary" onclick="toggleModal('modalSubscriber')">Cancel</button>
+        <button type="submit" class="btn btn-gold" {% if not routers or not plans %}disabled{% endif %}>Provision Subscriber</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleModal(modalId) {
+  const el = document.getElementById(modalId);
+  if (el.style.display === 'none' || el.style.display === '') {
+    el.style.display = 'flex';
+  } else {
+    el.style.display = 'none';
+  }
+}
+</script>
+{% endblock %}

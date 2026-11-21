@@ -1,0 +1,108 @@
+{% extends "tenant/base.html" %}
+
+{% block title %}Connect MikroTik Router — {{ tenant.name }}{% endblock %}
+{% block page_title %}Enroll New MikroTik Router{% endblock %}
+
+{% block content %}
+<div style="max-width: 800px; margin: 0 auto;">
+
+  {% if limit_reached and not created_router %}
+  <div class="card" style="border-color: var(--amber);">
+    <div style="display: flex; gap: 16px; align-items: center;">
+      <div style="font-size: 32px;">⚠️</div>
+      <div>
+        <div class="card-title" style="color: var(--amber);">Subscription Plan Limit Reached</div>
+        <div class="card-desc">
+          Your current <strong>{{ tenant.subscription.tier.value | upper }}</strong> subscription allows up to 
+          <strong>{{ max_allowed }}</strong> connected router{{ "s" if max_allowed > 1 else "" }}. 
+          You currently have {{ current_count }} router{{ "s" if current_count > 1 else "" }} enrolled.
+        </div>
+      </div>
+    </div>
+    <div style="margin-top: 20px;">
+      <a href="/checkout?plan=growth" class="btn btn-gold">Upgrade Plan for Additional Routers</a>
+      <a href="/tenant/routers" class="btn btn-secondary" style="margin-left: 12px;">Back to Routers</a>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if created_router %}
+  <!-- Success banner with one-time token and terminal script -->
+  <div class="card" style="border-color: var(--green);">
+    <div style="display: flex; gap: 16px; align-items: flex-start; margin-bottom: 20px;">
+      <div style="font-size: 36px; color: var(--green);">✓</div>
+      <div>
+        <div class="card-title" style="color: var(--green); font-size: 18px;">Router Successfully Created: {{ created_router.name }}</div>
+        <div class="card-desc">
+          Copy and run the configuration script below in your MikroTik RouterOS terminal.
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-bottom: 16px;">
+      <div style="font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 6px;">ONE-TIME ENROLLMENT TOKEN</div>
+      <div style="display: flex; gap: 12px; align-items: center;">
+        <input type="text" class="form-control" value="{{ enrollment_token }}" readonly style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--gold);">
+        <button type="button" class="btn btn-secondary" onclick="copyToClipboard('{{ enrollment_token }}', this)">Copy</button>
+      </div>
+      <div style="font-size: 11px; color: var(--amber); margin-top: 4px;">
+        * This secret token is only displayed once and is securely hashed in our database.
+      </div>
+    </div>
+
+    <div style="margin-top: 24px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <div style="font-size: 13px; font-weight: 600; color: #fff;">MikroTik RouterOS Terminal Command (Paste into Winbox / SSH)</div>
+        <button type="button" class="btn btn-gold" style="padding: 6px 14px; font-size: 12px;" onclick="copyToClipboard(document.getElementById('syncScriptText').innerText, this)">
+          Copy Script
+        </button>
+      </div>
+      <div class="code-box" id="syncScriptText">{{ sync_script }}</div>
+    </div>
+
+    <div style="margin-top: 24px; display: flex; gap: 12px;">
+      <a href="/tenant/routers" class="btn btn-secondary">Return to Router Fleet</a>
+      <a href="/tenant/dashboard" class="btn btn-secondary">View Dashboard</a>
+    </div>
+  </div>
+  {% else %}
+
+  <!-- Enrollment Form -->
+  {% if not limit_reached %}
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Router Details</div>
+        <div class="card-desc">Assign a friendly name and optional location for your MikroTik device.</div>
+      </div>
+      <span class="badge badge-gold">{{ current_count }} / {{ max_allowed }} Used</span>
+    </div>
+
+    <form method="post" action="/tenant/routers/add">
+      <div class="form-group">
+        <label class="form-label" for="name">Router Name *</label>
+        <input type="text" id="name" name="name" class="form-control" placeholder="e.g. Core-CCR2004 or Base-Station-Tower-1" required autofocus>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="location">Physical Location</label>
+        <input type="text" id="location" name="location" class="form-control" placeholder="e.g. Westlands PoP Rack 3">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="description">Notes / Description</label>
+        <input type="text" id="description" name="description" class="form-control" placeholder="e.g. Main Starlink gateway for residential PPPoE">
+      </div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 28px;">
+        <a href="/tenant/routers" class="btn btn-secondary">Cancel</a>
+        <button type="submit" class="btn btn-gold">Generate Enrollment Script →</button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+
+  {% endif %}
+
+</div>
+{% endblock %}

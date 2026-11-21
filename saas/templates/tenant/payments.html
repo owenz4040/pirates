@@ -1,0 +1,164 @@
+{% extends "tenant/base.html" %}
+
+{% block title %}Payment Gateways — {{ tenant.name }}{% endblock %}
+{% block page_title %}Tenant Payment Credentials & Customer Transaction Ledger{% endblock %}
+
+{% block content %}
+<div class="grid-2">
+
+  <!-- Left: M-Pesa Daraja Configuration -->
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Safaricom M-Pesa Daraja Integration</div>
+        <div class="card-desc">Collect subscriber payments directly into your Paybill or Till</div>
+      </div>
+      {% if has_mpesa %}
+      <span class="badge badge-online">Configured</span>
+      {% else %}
+      <span class="badge badge-provisioning">Not Configured</span>
+      {% endif %}
+    </div>
+
+    <form method="post" action="/tenant/payments/mpesa">
+      <div class="form-group">
+        <label class="form-label">Account Type</label>
+        <select name="mpesa_type" class="form-control">
+          <option value="paybill" {% if config and config.mpesa_type == 'paybill' %}selected{% endif %}>Paybill (Business Number)</option>
+          <option value="till" {% if config and config.mpesa_type == 'till' %}selected{% endif %}>Buy Goods / Till Number</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Shortcode / Business Number *</label>
+        <input type="text" name="shortcode" class="form-control" value="{{ config.mpesa_shortcode or '' if config else '' }}" placeholder="e.g. 174379 or 654321" required>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Consumer Key *</label>
+        <input type="text" name="consumer_key" class="form-control" placeholder="••••••••••••••••" required>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Consumer Secret *</label>
+        <input type="password" name="consumer_secret" class="form-control" placeholder="••••••••••••••••" required>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Online Passkey (STK Push) *</label>
+        <input type="password" name="passkey" class="form-control" placeholder="••••••••••••••••" required>
+      </div>
+
+      <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 16px;">
+        🔒 All credentials are encrypted with AES-256-GCM before storage.
+      </div>
+
+      <button type="submit" class="btn btn-gold" style="width: 100%;">Save M-Pesa Credentials</button>
+    </form>
+  </div>
+
+  <!-- Right: Paystack Configuration -->
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Paystack Account (Cards & Bank Transfer)</div>
+        <div class="card-desc">Accept online debit cards and recurring payments</div>
+      </div>
+      {% if has_paystack %}
+      <span class="badge badge-online">Configured</span>
+      {% else %}
+      <span class="badge badge-provisioning">Not Configured</span>
+      {% endif %}
+    </div>
+
+    <form method="post" action="/tenant/payments/paystack">
+      <div class="form-group">
+        <label class="form-label">Paystack Public Key *</label>
+        <input type="text" name="public_key" class="form-control" value="{{ config.paystack_public_key or '' if config else '' }}" placeholder="pk_test_... or pk_live_..." required>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Paystack Secret Key *</label>
+        <input type="password" name="secret_key" class="form-control" placeholder="sk_test_... or sk_live_..." required>
+      </div>
+
+      <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 16px;">
+        🔒 Secret key is encrypted at rest using platform AES-256 encryption.
+      </div>
+
+      <button type="submit" class="btn btn-secondary" style="width: 100%;">Save Paystack Keys</button>
+    </form>
+
+    <div style="margin-top: 24px; padding: 14px; background: rgba(10, 12, 18, 0.6); border-radius: var(--radius-sm); border: 1px solid var(--border);">
+      <div style="font-size: 12px; font-weight: 600; color: #fff; margin-bottom: 4px;">Independent Payment Collection</div>
+      <p style="font-size: 11px; color: var(--text-muted); line-height: 1.4;">
+        Customer revenue flows directly into your own bank / M-Pesa accounts. COwen ISP does not take commissions or hold tenant funds.
+      </p>
+    </div>
+  </div>
+
+</div>
+
+<!-- Customer Payment Audit Ledger -->
+<div class="card">
+  <div class="card-header">
+    <div>
+      <div class="card-title">Customer Transactions Ledger</div>
+      <div class="card-desc">Subscriber payments processed through your configured gateways</div>
+    </div>
+  </div>
+
+  {% if payments %}
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>Payment Reference</th>
+          <th>Type / Subscriber</th>
+          <th>Gateway</th>
+          <th>Phone / Payer</th>
+          <th>Amount</th>
+          <th>Status</th>
+          <th>Timestamp</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in payments %}
+        <tr>
+          <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--gold);">
+            {{ p.reference }}
+          </td>
+          <td>
+            {% if p.customer_id %}
+            <span style="color: #fff; font-weight: 500;">PPPoE Subscription</span>
+            {% elif p.voucher_id %}
+            <span style="color: #fff; font-weight: 500;">Hotspot Voucher</span>
+            {% else %}
+            <span style="color: var(--text-dim);">General Service</span>
+            {% endif %}
+          </td>
+          <td><span class="badge badge-gold">{{ p.gateway | upper }}</span></td>
+          <td>{{ p.phone_number or "—" }}</td>
+          <td style="font-weight: 700; color: #fff;">KES {{ "{:,.2f}".format(p.amount_kes) }}</td>
+          <td>
+            {% if p.status == 'completed' %}
+            <span class="badge badge-online">Completed</span>
+            {% else %}
+            <span class="badge badge-provisioning">{{ p.status | capitalize }}</span>
+            {% endif %}
+          </td>
+          <td style="font-size: 12px; color: var(--text-dim);">{{ p.created_at.strftime('%b %d, %Y %H:%M') if p.created_at else '' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-icon">🧾</div>
+    <div class="empty-title">No Customer Payments Recorded</div>
+    <div class="empty-text">Once your M-Pesa Daraja or Paystack gateways are connected, subscriber transactions will appear in this ledger.</div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

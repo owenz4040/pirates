@@ -1,0 +1,167 @@
+{% extends "tenant/base.html" %}
+
+{% block title %}Dashboard — {{ tenant.name }}{% endblock %}
+{% block page_title %}Network Operations & Revenue Overview{% endblock %}
+
+{% block content %}
+<!-- Top 4 Summary Cards -->
+<div class="grid-4">
+  <div class="stat-card">
+    <div class="stat-label">PPPoE Subscribers</div>
+    <div class="stat-value">{{ total_customers }}</div>
+    <div class="stat-sub">
+      <span style="color: var(--green);">● {{ active_customers }} Active</span> &nbsp;|&nbsp; 
+      <span style="color: var(--red);">● {{ expired_customers }} Expired</span>
+    </div>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-label">MikroTik Routers</div>
+    <div class="stat-value">{{ total_routers }} / {{ max_routers }}</div>
+    <div class="stat-sub">
+      <span style="color: var(--green);">● {{ online_routers }} Online</span> &nbsp;|&nbsp; 
+      <span style="color: var(--red);">● {{ offline_routers }} Offline</span>
+    </div>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-label">Monthly Revenue</div>
+    <div class="stat-value">KES {{ "{:,.2f}".format(monthly_revenue) }}</div>
+    <div class="stat-sub">Customer Payments (This Month)</div>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-label">Platform Plan</div>
+    <div class="stat-value" style="color: var(--gold); text-transform: uppercase; font-size: 24px;">
+      {{ subscription.tier.value if subscription else "Starter" }}
+    </div>
+    <div class="stat-sub">
+      {% if subscription and subscription.expires_at %}
+      Renews: {{ subscription.expires_at.strftime('%b %d, %Y') }}
+      {% else %}
+      Active Subscription
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Quick Action Shortcuts -->
+<div style="display: flex; gap: 12px; margin-bottom: 28px; flex-wrap: wrap;">
+  <a href="/tenant/routers/add" class="btn btn-gold">+ Connect MikroTik Router</a>
+  <a href="/tenant/pppoe" class="btn btn-secondary">+ Add PPPoE Subscriber</a>
+  <a href="/tenant/hotspot" class="btn btn-secondary">+ Generate Hotspot Vouchers</a>
+  <a href="/tenant/payments" class="btn btn-secondary">Configure M-Pesa / Paystack</a>
+</div>
+
+<!-- Main 2-Column Split: Recent Payments & System Activity -->
+<div class="grid-2">
+  
+  <!-- Left: Recent Payments -->
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Recent Customer Payments</div>
+        <div class="card-desc">Subscriber payments received directly into your accounts</div>
+      </div>
+      <a href="/tenant/reports" style="font-size: 13px;">View All →</a>
+    </div>
+
+    {% if recent_payments %}
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Reference</th>
+            <th>Amount</th>
+            <th>Gateway</th>
+            <th>Status</th>
+            <th>Date</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in recent_payments %}
+          <tr>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">{{ p.reference }}</td>
+            <td style="font-weight: 600; color: #fff;">KES {{ "{:,.2f}".format(p.amount_kes) }}</td>
+            <td><span class="badge badge-gold">{{ p.gateway | upper }}</span></td>
+            <td>
+              {% if p.status == 'completed' %}
+              <span class="badge badge-online">Paid</span>
+              {% else %}
+              <span class="badge badge-provisioning">{{ p.status }}</span>
+              {% endif %}
+            </td>
+            <td style="color: var(--text-muted); font-size: 12px;">{{ p.created_at.strftime('%b %d, %H:%M') if p.created_at else '' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <div class="empty-icon">💳</div>
+      <div class="empty-title">No Customer Payments Yet</div>
+      <div class="empty-text">When customers purchase vouchers or renew PPPoE plans, transactions will appear here live.</div>
+      <a href="/tenant/payments" class="btn btn-secondary">Setup Payment Gateway</a>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Right: Recent Router Commands & Activity -->
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Router Activity & Command Queue</div>
+        <div class="card-desc">Outbound commands synced to your MikroTik routers</div>
+      </div>
+      <a href="/tenant/routers" style="font-size: 13px;">Fleet Status →</a>
+    </div>
+
+    {% if recent_commands %}
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Description</th>
+            <th>Status</th>
+            <th>Queued</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for cmd in recent_commands %}
+          <tr>
+            <td>
+              <div style="font-weight: 500; color: #fff;">{{ cmd.description }}</div>
+              <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-dim); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                {{ cmd.script }}
+              </div>
+            </td>
+            <td>
+              {% if cmd.status.value == 'done' %}
+              <span class="badge badge-online">Synced</span>
+              {% elif cmd.status.value == 'pending' %}
+              <span class="badge badge-provisioning">Pending</span>
+              {% elif cmd.status.value == 'sent' %}
+              <span class="badge badge-provisioning">Sent</span>
+              {% else %}
+              <span class="badge badge-offline">Failed</span>
+              {% endif %}
+            </td>
+            <td style="color: var(--text-muted); font-size: 12px;">{{ cmd.created_at.strftime('%b %d, %H:%M') if cmd.created_at else '' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <div class="empty-icon">📡</div>
+      <div class="empty-title">No Router Activity Recorded</div>
+      <div class="empty-text">Connect a MikroTik router to start queuing automated user provisioning and voucher sync commands.</div>
+      <a href="/tenant/routers/add" class="btn btn-gold">+ Connect Router</a>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}
