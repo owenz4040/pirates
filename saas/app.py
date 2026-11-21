@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -84,6 +84,12 @@ app.include_router(marketing_router)
 app.include_router(onboarding_router)
 app.include_router(superadmin_router)
 app.include_router(tenant_router)
+
+
+@app.get("/admin/login")
+@app.get("/admin")
+def admin_login_redirect():
+    return RedirectResponse(url="/superadmin/login", status_code=status.HTTP_302_FOUND)
 
 
 # ---------------------------------------------------------
