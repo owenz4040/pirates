@@ -53,11 +53,13 @@ class SaasSettings(BaseSettings):
 
     @property
     def effective_paystack_secret_key(self) -> str:
-        return self.platform_paystack_secret_key or os.environ.get("PAYSTACK_SECRET_KEY") or ""
+        key = self.platform_paystack_secret_key or os.environ.get("PAYSTACK_SECRET_KEY") or ""
+        return key.strip()
 
     @property
     def effective_paystack_public_key(self) -> str:
-        return self.platform_paystack_public_key or os.environ.get("PAYSTACK_PUBLIC_KEY") or ""
+        key = self.platform_paystack_public_key or os.environ.get("PAYSTACK_PUBLIC_KEY") or ""
+        return key.strip()
 
 
 saas_settings = SaasSettings()

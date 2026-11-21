@@ -25,9 +25,9 @@ def _get_secret_key(override_key: str | None = None) -> str:
         or saas_settings.platform_paystack_secret_key
         or ""
     )
-    if not key:
+    if not key or not key.strip():
         raise PaystackPlatformError("PLATFORM_PAYSTACK_SECRET_KEY is not configured.")
-    return key
+    return key.strip()
 
 
 def _headers(secret_key: str | None = None) -> dict[str, str]:
