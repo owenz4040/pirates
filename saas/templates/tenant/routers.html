@@ -84,8 +84,15 @@
               <button type="button" class="btn btn-secondary" style="padding: 6px 12px; font-size: 11px;" onclick="promptRename('{{ r.id }}', '{{ r.name }}')">
                 Rename
               </button>
+              <form method="post" action="/tenant/routers/{{ r.id }}/rotate-token" style="display: inline;" onsubmit="return confirm('Rotate sync token for {{ r.name }}? The router will require the updated script.');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-secondary" style="padding: 6px 12px; font-size: 11px;">
+                  Rotate Token
+                </button>
+              </form>
               {% if r.status.value != 'suspended' %}
               <form method="post" action="/tenant/routers/{{ r.id }}/deactivate" style="display: inline;" onsubmit="return confirm('Suspend router sync for {{ r.name }}?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" class="btn btn-danger" style="padding: 6px 12px; font-size: 11px;">
                   Suspend
                 </button>
@@ -131,6 +138,11 @@ function promptRename(routerId, currentName) {
     const form = document.createElement("form");
     form.method = "POST";
     form.action = `/tenant/routers/${routerId}/rename`;
+    const csrfInput = document.createElement("input");
+    csrfInput.type = "hidden";
+    csrfInput.name = "csrf_token";
+    csrfInput.value = "{{ csrf_token }}";
+    form.appendChild(csrfInput);
     const input = document.createElement("input");
     input.type = "hidden";
     input.name = "name";

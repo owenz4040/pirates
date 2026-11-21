@@ -79,6 +79,7 @@
     </div>
 
     <form method="post" action="/tenant/routers/add">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="form-group">
         <label class="form-label" for="name">Router Name *</label>
         <input type="text" id="name" name="name" class="form-control" placeholder="e.g. Core-CCR2004 or Base-Station-Tower-1" required autofocus>

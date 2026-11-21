@@ -126,6 +126,7 @@
       <button type="button" onclick="toggleModal('modalPlan')" style="background: none; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer;">✕</button>
     </div>
     <form method="post" action="/tenant/pppoe/plans/add">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="form-group">
         <label class="form-label">Plan Name *</label>
         <input type="text" name="name" class="form-control" placeholder="e.g. 10 Mbps Residential" required>
@@ -158,6 +159,7 @@
       <button type="button" onclick="toggleModal('modalSubscriber')" style="background: none; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer;">✕</button>
     </div>
     <form method="post" action="/tenant/pppoe/subscribers/add">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="form-group">
         <label class="form-label">Assigned MikroTik Router *</label>
         <select name="router_id" class="form-control" required>

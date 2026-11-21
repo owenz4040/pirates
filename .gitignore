@@ -13,3 +13,5 @@ uvicorn.*.log
 !.env.example
 .neon
 node_modules/
+*.db
+scratch/

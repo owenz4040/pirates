@@ -21,6 +21,7 @@
     </div>
 
     <form method="post" action="/tenant/payments/mpesa">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="form-group">
         <label class="form-label">Account Type</label>
         <select name="mpesa_type" class="form-control">
@@ -72,6 +73,7 @@
     </div>
 
     <form method="post" action="/tenant/payments/paystack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="form-group">
         <label class="form-label">Paystack Public Key *</label>
         <input type="text" name="public_key" class="form-control" value="{{ config.paystack_public_key or '' if config else '' }}" placeholder="pk_test_... or pk_live_..." required>

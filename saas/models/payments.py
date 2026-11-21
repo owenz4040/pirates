@@ -18,7 +18,9 @@ from saas.security.crypto import decrypt_secret, encrypt_secret
 class TenantPaymentConfig(SaasBase):
     """
     Independent payment gateway credentials configured by a tenant ISP.
-    All sensitive credentials (API keys, secrets, passkeys) are encrypted at rest with AES-256-GCM / Fernet.
+    All sensitive credentials (API keys, secrets, passkeys) are encrypted at rest with
+    Fernet (AES-128-CBC with PKCS7 padding and HMAC-SHA256 authenticated encryption)
+    with MultiFernet key rotation support.
     """
     __tablename__ = "tenant_payment_configs"
 

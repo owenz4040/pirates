@@ -18,6 +18,7 @@
       </div>
 
       <form method="post" action="/tenant/settings/company">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <div class="form-group">
           <label class="form-label">Company Name *</label>
           <input type="text" name="name" class="form-control" value="{{ tenant.name }}" required>
@@ -53,6 +54,7 @@
       </div>
 
       <form method="post" action="/tenant/settings/password">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <div class="form-group">
           <label class="form-label">Current Password *</label>
           <input type="password" name="current_password" class="form-control" placeholder="••••••••••••" required>
@@ -86,6 +88,7 @@
       </div>
 
       <form method="post" action="/tenant/settings/branding">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <div class="form-group">
           <label class="form-label">Customer Portal Title</label>
           <input type="text" name="company_title" class="form-control" value="{{ branding.company_title or 'ISP Billing' }}" required>

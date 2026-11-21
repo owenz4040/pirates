@@ -125,9 +125,14 @@ def test_tenant_login_page_renders(client):
 
 def test_tenant_login_success(client, db_session):
     tenant, admin = create_mock_tenant(db_session, "Alpha ISP", "alpha-isp")
+    get_resp = client.get("/tenant/login")
+    import re
+    match = re.search(r'name="csrf_token"\s+value="([^"]+)"', get_resp.text)
+    csrf = match.group(1) if match else ""
+
     response = client.post(
         "/tenant/login",
-        data={"email": admin.email, "password": "ValidPassword123!"},
+        data={"email": admin.email, "password": "ValidPassword123!", "csrf_token": csrf},
         follow_redirects=False,
     )
     assert response.status_code == 303
@@ -136,9 +141,14 @@ def test_tenant_login_success(client, db_session):
 
 def test_tenant_login_invalid_password(client, db_session):
     tenant, admin = create_mock_tenant(db_session, "Beta ISP", "beta-isp")
+    get_resp = client.get("/tenant/login")
+    import re
+    match = re.search(r'name="csrf_token"\s+value="([^"]+)"', get_resp.text)
+    csrf = match.group(1) if match else ""
+
     response = client.post(
         "/tenant/login",
-        data={"email": admin.email, "password": "WrongPassword"},
+        data={"email": admin.email, "password": "WrongPassword", "csrf_token": csrf},
     )
     assert response.status_code == 401
     assert "Invalid email or password" in response.text
@@ -147,7 +157,7 @@ def test_tenant_login_invalid_password(client, db_session):
 def test_unauthenticated_dashboard_redirects_to_login(client):
     response = client.get("/tenant/dashboard", follow_redirects=False)
     assert response.status_code == 303
-    assert response.headers["Location"] == "/tenant/login"
+    assert response.headers["Location"].startswith("/tenant/login")
 
 
 # =====================================================================
@@ -212,7 +222,7 @@ def test_outbound_https_router_sync_and_command_delivery(client, db_session):
     # Simulate MikroTik RouterOS outbound /tool fetch sync
     sync_resp = client.post(
         "/api/router/sync",
-        headers={"X-Router-Token": raw_token},
+        headers={"X-Router-Token": raw_token, "Accept": "application/json"},
         json={
             "version": "7.15.2",
             "board": "CCR2004-16G-2S+",
