@@ -14,6 +14,7 @@ from saas.database import SaasBase
 from saas.models.base import TenantScopedModel
 
 if TYPE_CHECKING:
+    from saas.models.deployment import HotspotDeployment
     from saas.models.router import Router
 
 

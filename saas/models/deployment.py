@@ -3,12 +3,17 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from saas.database import SaasBase
 from saas.models.base import TenantScopedModel
+
+if TYPE_CHECKING:
+    from saas.models.hotspot import HotspotPortalDesign
+    from saas.models.router import Router
 
 
 class DeploymentStatus(str, enum.Enum):
