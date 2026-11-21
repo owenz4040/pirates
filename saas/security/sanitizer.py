@@ -106,22 +106,97 @@ def validate_comment(comment: str | None) -> str:
     return cleaned[:128]
 
 
+# Verified Let's Encrypt ISRG Root X1 Certificate and SHA-256 Fingerprint
+ISRG_ROOT_X1_SHA256 = "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6"
+ISRG_ROOT_X1_PEM = (
+    "-----BEGIN CERTIFICATE-----\\r\\n"
+    "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\\r\\n"
+    "-----END CERTIFICATE-----\\r\\n"
+)
+
+
 def build_pppoe_profile_command(
     name: str,
     rate_limit: str,
+    comment: str = "COwen Managed Profile",
 ) -> str:
-    """Build a safe, idempotent RouterOS command to create or update a PPP profile."""
+    """Build a safe, conflict-safe idempotent RouterOS command to create or update a PPP profile.
+
+    Ensures the profile has the exact rate-limit without overwriting existing unmanaged profiles.
+    """
     v_name = validate_plan_name(name)
     v_rate = validate_rate_limit(rate_limit)
+    v_comm = validate_comment(comment)
 
-    match = f"name={quote_routeros(v_name)}"
-    add_args = f"rate-limit={quote_routeros(v_rate)}"
-    set_args = f"rate-limit={quote_routeros(v_rate)}"
+    q_name = quote_routeros(v_name)
+    q_rate = quote_routeros(v_rate)
+    q_comm = quote_routeros(v_comm)
 
     return (
-        f":if ([:len [/ppp profile find where {match}]] = 0) "
-        f"do={{/ppp profile add {match} {add_args}}} "
-        f"else={{/ppp profile set [find where {match}] {set_args}}}"
+        f":if ([:len [/ppp profile find where name={q_name}]] = 0) do={{"
+        f"/ppp profile add name={q_name} rate-limit={q_rate} comment={q_comm}"
+        f"}} else={{"
+        f":if ([:len [/ppp profile find where name={q_name} and comment={q_comm}]] > 0) do={{"
+        f"/ppp profile set [find where name={q_name} and comment={q_comm}] rate-limit={q_rate}"
+        f"}}"
+        f"}}"
+    )
+
+
+def build_hotspot_profile_command(
+    name: str,
+    rate_limit: str,
+    shared_users: int = 1,
+    comment: str = "COwen Managed Profile",
+) -> str:
+    """Build a safe, conflict-safe idempotent RouterOS command to create or update a Hotspot user profile.
+
+    Ensures the user profile has the exact rate-limit and shared-users settings without overwriting unmanaged profiles.
+    """
+    v_name = validate_package_name(name)
+    v_rate = validate_rate_limit(rate_limit)
+    v_comm = validate_comment(comment)
+
+    q_name = quote_routeros(v_name)
+    q_rate = quote_routeros(v_rate)
+    q_comm = quote_routeros(v_comm)
+
+    return (
+        f":if ([:len [/ip hotspot user profile find where name={q_name}]] = 0) do={{"
+        f"/ip hotspot user profile add name={q_name} rate-limit={q_rate} shared-users={shared_users} comment={q_comm}"
+        f"}} else={{"
+        f":if ([:len [/ip hotspot user profile find where name={q_name} and comment={q_comm}]] > 0) do={{"
+        f"/ip hotspot user profile set [find where name={q_name} and comment={q_comm}] rate-limit={q_rate} shared-users={shared_users}"
+        f"}}"
+        f"}}"
     )
 
 
@@ -210,18 +285,14 @@ def build_mikrotik_sync_script_source(
     All internal string quotes are escaped as \\\" and variable references as \\$
     to guarantee safe parsing into the RouterOS script repository with zero quote collisions
     or premature variable expansions in the terminal.
-    Uses check-certificate=no to guarantee native, out-of-the-box HTTPS polling on both
-    RouterOS 6 (which lacks preinstalled root CAs) and RouterOS 7, while maintaining
-    TLS transport encryption and cryptographic token authentication.
-    Zero files are written to NAND storage.
+    Uses strict TLS certificate verification (check-certificate=yes-without-crl)
+    and per-router cryptographic token authentication (X-Router-Token).
+    Zero deployment-wide bypass secrets are embedded.
+    Zero files are written to NAND storage during polling.
     """
     clean_url = sync_url.strip().replace('"', '').replace('\\', '').replace('$', '')
     clean_token = raw_token.strip().replace('"', '').replace('\\', '').replace('$', '')
     header_val = f"Content-Type: application/x-www-form-urlencoded,X-Router-Token: {clean_token}"
-    if bypass_secret:
-        clean_bypass = bypass_secret.strip().replace('"', '').replace('\\', '').replace('$', '')
-        if clean_bypass:
-            header_val += f",x-vercel-protection-bypass: {clean_bypass}"
 
     source_statements = [
         ":local ver [/system resource get version];",
@@ -231,7 +302,7 @@ def build_mikrotik_sync_script_source(
         ':local info (\\"version=\\" . \\$ver . \\"&uptime=\\" . \\$upt . \\"&cpu=\\" . \\$cpu . \\"&board=\\" . \\$brd);',
         ':local body \\"\\";',
         ':local status \\"\\";',
-        f':do {{ :local res [/tool fetch url=\\"{clean_url}\\" http-method=post http-header-field=\\"{header_val}\\" http-data=\\$info check-certificate=no output=user as-value]; :set status (\\$res->\\"status\\"); :set body (\\$res->\\"data\\"); :log info \\"COwen_Sync: Check-in successful\\"; }} on-error={{ :log warning \\"COwen_Sync: HTTPS fetch failed - check network or TLS certificates\\" }};',
+        f':do {{ :local res [/tool fetch url=\\"{clean_url}\\" http-method=post http-header-field=\\"{header_val}\\" http-data=\\$info check-certificate=yes-without-crl output=user as-value]; :set status (\\$res->\\"status\\"); :set body (\\$res->\\"data\\"); :log info \\"COwen_Sync: Check-in successful\\"; }} on-error={{ :log warning \\"COwen_Sync: HTTPS fetch failed - check network or TLS certificates\\" }};',
         ':if (\\$status = \\"finished\\" and [:len \\$body] >= 16 and [:len \\$body] <= 32768 and [:pick \\$body 0 16] = \\"# COwen-Batch-OK\\") do={{ :do {{ :local run [:parse \\$body]; \\$run; }} on-error={{ :log warning \\"COwen_Sync: batch command execution error\\" }}; }};'
     ]
     return " ".join(source_statements)
@@ -246,32 +317,49 @@ def build_mikrotik_rsc_file(
     """Generates a downloadable, self-contained RouterOS .rsc configuration script.
 
     Compatible with RouterOS 7.x (including 7.25.1) and RouterOS 6.49+.
+    Enforces strict TLS verification via check-certificate=yes-without-crl.
+    On RouterOS 7, automatically enables official Mozilla root trust store.
+    On RouterOS 6, imports verified Let's Encrypt ISRG Root X1 CA and marks trusted,
+    then removes temporary files immediately to leave zero flash residue.
     Can be imported safely using: /import file-name=cowen_setup.rsc
-    Avoids multiline terminal paste and CRLF buffer truncation issues.
     """
     clean_name = validate_plan_name(router_name)
-    script_source = build_mikrotik_sync_script_source(sync_url, raw_token, bypass_secret=bypass_secret)
+    script_source = build_mikrotik_sync_script_source(sync_url, raw_token)
 
     return (
         f"# =====================================================================\n"
         f"# COwen ISP SaaS — MikroTik RouterOS Setup Configuration\n"
         f"# Target Router: {clean_name}\n"
         f"# Cloud Endpoint: {sync_url}\n"
-        f"# Architecture: Outbound HTTPS Polling (Port 443 in RAM)\n"
+        f"# Architecture: Outbound HTTPS Polling (Strict TLS on Port 443)\n"
         f"# Compatibility: RouterOS 6.49+ & RouterOS 7.x\n"
         f"# =====================================================================\n\n"
-        f"# Step 1: Enable native SSL/TLS root certificates on RouterOS 7 (if supported)\n"
+        f"# Step 1: RouterOS 7 — Enable native SSL root certificates\n"
         f":do {{ /certificate enable-ssl-certificate }} on-error={{\n"
-        f"    :log info \"COwen_Sync: enable-ssl-certificate not supported on RouterOS 6 (native HTTPS active)\"\n"
+        f"    :log info \"COwen_Sync: enable-ssl-certificate not supported on RouterOS 6 (using imported root CA)\"\n"
         f"}}\n\n"
-        f"# Step 2: Remove any previous synchronization script and scheduler safely\n"
+        f"# Step 2: RouterOS 6 — Ensure official ISRG Root X1 CA is installed and trusted\n"
+        f":if ([:len [/certificate find where fingerprint=\"{ISRG_ROOT_X1_SHA256}\"]] = 0) do={{\n"
+        f"    :do {{\n"
+        f"        /file print file=\"cowen_rootca\"\n"
+        f"        :delay 2s\n"
+        f"        /file set cowen_rootca.txt contents=\"{ISRG_ROOT_X1_PEM}\"\n"
+        f"        /certificate import file-name=cowen_rootca.txt passphrase=\"\"\n"
+        f"        /file remove [find name=\"cowen_rootca.txt\"]\n"
+        f"        /certificate set [find where fingerprint=\"{ISRG_ROOT_X1_SHA256}\"] trusted=yes\n"
+        f"        :log info \"COwen_Sync: ISRG Root X1 certificate imported and trusted\"\n"
+        f"    }} on-error={{\n"
+        f"        :log warning \"COwen_Sync: Root CA import failed or not needed\"\n"
+        f"    }}\n"
+        f"}}\n\n"
+        f"# Step 3: Remove any previous synchronization script and scheduler safely\n"
         f":do {{ /system script remove [find name=\"COwen_Sync_Script\"] }} on-error={{}}\n"
         f":do {{ /system scheduler remove [find name=\"COwen_Sync\"] }} on-error={{}}\n\n"
-        f"# Step 3: Add synchronization script to RAM script repository\n"
+        f"# Step 4: Add synchronization script to RAM script repository\n"
         f"/system script add name=\"COwen_Sync_Script\" comment=\"COwen ISP SaaS Cloud Sync\" source=\"{script_source}\"\n\n"
-        f"# Step 4: Schedule synchronization every 60 seconds\n"
+        f"# Step 5: Schedule synchronization every 60 seconds\n"
         f"/system scheduler add name=\"COwen_Sync\" interval=60s on-event=\"COwen_Sync_Script\" start-time=startup comment=\"COwen ISP SaaS Cloud Poller\"\n\n"
-        f"# Step 5: Execute initial synchronization immediately\n"
+        f"# Step 6: Execute initial synchronization immediately\n"
         f"/system script run COwen_Sync_Script\n"
         f":log info \"COwen_Sync: Setup successfully imported and initialized.\"\n"
     )
@@ -283,9 +371,9 @@ def build_mikrotik_terminal_commands(
     router_name: str,
     bypass_secret: str | None = None,
 ) -> str:
-    """Generates terminal paste commands with single-line script source to avoid CRLF line continuation bugs."""
+    """Generates terminal paste commands with single-line script source and strict TLS validation."""
     clean_name = validate_plan_name(router_name)
-    script_source = build_mikrotik_sync_script_source(sync_url, raw_token, bypass_secret=bypass_secret)
+    script_source = build_mikrotik_sync_script_source(sync_url, raw_token)
 
     return (
         f"# MikroTik RouterOS Outbound HTTPS Synchronization Setup\n"

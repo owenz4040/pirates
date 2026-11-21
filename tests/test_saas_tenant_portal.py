@@ -310,7 +310,10 @@ def test_pppoe_plan_and_subscriber_flow(client, db_session):
     assert cust.full_name == "Bob Smith"
 
     queued_cmd = db_session.scalar(
-        select(RouterCommand).where(RouterCommand.router_id == router.id)
+        select(RouterCommand).where(
+            RouterCommand.router_id == router.id,
+            RouterCommand.description.like("%client_001%"),
+        )
     )
     assert queued_cmd is not None
     assert 'client_001' in queued_cmd.script

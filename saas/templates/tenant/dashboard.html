@@ -144,7 +144,13 @@
               {% elif cmd.status.value == 'sent' %}
               <span class="badge badge-provisioning">Sent</span>
               {% else %}
-              <span class="badge badge-offline">Failed</span>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span class="badge badge-offline">Failed</span>
+                <form method="post" action="/tenant/routers/commands/{{ cmd.id }}/retry" style="display: inline; margin: 0;">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <button type="submit" class="btn btn-secondary" style="padding: 2px 8px; font-size: 10px; cursor: pointer;">Retry</button>
+                </form>
+              </div>
               {% endif %}
             </td>
             <td style="color: var(--text-muted); font-size: 12px;">{{ cmd.created_at.strftime('%b %d, %H:%M') if cmd.created_at else '' }}</td>

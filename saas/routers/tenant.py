@@ -6,7 +6,7 @@ import os
 import re
 import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Form, Header, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from saas.config import saas_settings
@@ -66,6 +66,7 @@ from saas.security.rate_limit import (
 )
 from saas.security.sanitizer import (
     CommandInjectionError,
+    build_hotspot_profile_command,
     build_hotspot_user_command,
     build_mikrotik_rsc_file,
     build_mikrotik_sync_script_source,
@@ -464,20 +465,12 @@ def tenant_dashboard(
 def _build_mikrotik_setup_script(sync_url: str, raw_token: str, router_name: str) -> str:
     """Generate safe, RAM-only RouterOS commands compatible with RouterOS 6.49+ and RouterOS 7.x.
 
-    Zero files are written to NAND flash storage.
+    Zero files are written to NAND flash storage during sync operations.
     Initial removal is safely wrapped with on-error handlers.
-    Response is strictly validated: status must be finished, size within 32KB,
-    and payload must match the '# COwen-Batch-OK' signature before execution in memory.
-    Internal quotes are fully escaped (\\\") and variables (\\$) to prevent premature expansion
-    and CRLF terminal line continuation issues.
-    Uses check-certificate=no to run seamlessly on both RouterOS 6 and RouterOS 7.
+    Strict TLS verification is enforced (check-certificate=yes-without-crl).
+    Zero bypass secrets are distributed.
     """
-    bypass_secret = (
-        os.environ.get("VERCEL_AUTOMATION_BYPASS_SECRET")
-        or os.environ.get("VERCEL_PROTECTION_BYPASS")
-        or ("sGSxMy2a74zn4CHIakEhnWFoyZ3uHXLy" if "vercel.app" in sync_url and not sync_url.startswith("https://cowen.vercel.app") else None)
-    )
-    return build_mikrotik_terminal_commands(sync_url, raw_token, router_name, bypass_secret=bypass_secret)
+    return build_mikrotik_terminal_commands(sync_url, raw_token, router_name)
 
 
 @tenant_router.get("/tenant/routers", response_class=HTMLResponse)
@@ -792,12 +785,7 @@ def tenant_router_download_rsc(
 
     base_url = str(request.base_url).rstrip("/")
     sync_url = f"{base_url}/api/router/sync"
-    bypass_secret = (
-        os.environ.get("VERCEL_AUTOMATION_BYPASS_SECRET")
-        or os.environ.get("VERCEL_PROTECTION_BYPASS")
-        or ("sGSxMy2a74zn4CHIakEhnWFoyZ3uHXLy" if "vercel.app" in sync_url and not sync_url.startswith("https://cowen.vercel.app") else None)
-    )
-    rsc_content = build_mikrotik_rsc_file(sync_url, raw_token, router.name, bypass_secret=bypass_secret)
+    rsc_content = build_mikrotik_rsc_file(sync_url, raw_token, router.name)
     safe_filename = re.sub(r"[^a-zA-Z0-9_\-]", "_", router.name)
 
     return Response(
@@ -891,6 +879,25 @@ def tenant_pppoe_plan_add(
         is_active=True,
     )
     db.add(plan)
+
+    # Proactively queue PPP profile creation to all active tenant routers
+    routers = db.scalars(
+        select(Router).where(
+            Router.tenant_id == context.tenant.id,
+            Router.status != RouterStatus.suspended,
+        )
+    ).all()
+    prof_cmd = build_pppoe_profile_command(clean_name, clean_rate)
+    for r in routers:
+        cmd = RouterCommand(
+            tenant_id=context.tenant.id,
+            router_id=r.id,
+            description=f"Provision PPP profile: {clean_name}",
+            script=prof_cmd,
+            status=RouterCommandStatus.pending,
+        )
+        db.add(cmd)
+
     db.commit()
     set_flash(request, msg=f"Plan '{clean_name}' created successfully.")
     return RedirectResponse(url="/tenant/pppoe", status_code=status.HTTP_303_SEE_OTHER)
@@ -1160,6 +1167,25 @@ def tenant_hotspot_package_add(
         is_active=True,
     )
     db.add(pkg)
+
+    # Proactively queue safe Hotspot profile creation to all active tenant routers
+    routers = db.scalars(
+        select(Router).where(
+            Router.tenant_id == context.tenant.id,
+            Router.status != RouterStatus.suspended,
+        )
+    ).all()
+    prof_cmd = build_hotspot_profile_command(clean_name, clean_rate)
+    for r in routers:
+        cmd = RouterCommand(
+            tenant_id=context.tenant.id,
+            router_id=r.id,
+            description=f"Provision Hotspot profile: {clean_name}",
+            script=prof_cmd,
+            status=RouterCommandStatus.pending,
+        )
+        db.add(cmd)
+
     db.commit()
     set_flash(request, msg=f"Package '{clean_name}' created successfully.")
     return RedirectResponse(url="/tenant/hotspot", status_code=status.HTTP_303_SEE_OTHER)
@@ -1227,15 +1253,20 @@ def tenant_hotspot_vouchers_generate(
             commands_to_queue.append(cmd)
 
     if target_router and commands_to_queue:
-        batched_script = "\n".join(commands_to_queue)
-        command = RouterCommand(
-            tenant_id=context.tenant.id,
-            router_id=target_router.id,
-            description=f"Batch {batch_id}: Add {qty} hotspot vouchers",
-            script=batched_script,
-            status=RouterCommandStatus.pending,
-        )
-        db.add(command)
+        profile_cmd = build_hotspot_profile_command(pkg.name, pkg.rate_limit)
+        chunk_size = 5
+        total_chunks = (len(commands_to_queue) + chunk_size - 1) // chunk_size
+        for chunk_idx, i in enumerate(range(0, len(commands_to_queue), chunk_size), 1):
+            chunk = commands_to_queue[i : i + chunk_size]
+            chunk_script = f"{profile_cmd};\n" + ";\n".join(chunk)
+            cmd_record = RouterCommand(
+                tenant_id=context.tenant.id,
+                router_id=target_router.id,
+                description=f"Batch {batch_id} (chunk {chunk_idx}/{total_chunks}): Add {len(chunk)} hotspot vouchers",
+                script=chunk_script,
+                status=RouterCommandStatus.pending,
+            )
+            db.add(cmd_record)
 
     db.commit()
     set_flash(request, msg=f"Successfully generated {qty} vouchers (Batch {batch_id}).")
@@ -1613,21 +1644,15 @@ def render_router_batch(batch: list[RouterCommand], ack_url: str, raw_token: str
         )
 
     q_ack_url = quote_routeros(ack_url)
-    bypass_secret = (
-        os.environ.get("VERCEL_AUTOMATION_BYPASS_SECRET")
-        or os.environ.get("VERCEL_PROTECTION_BYPASS")
-        or ("sGSxMy2a74zn4CHIakEhnWFoyZ3uHXLy" if "vercel.app" in ack_url and not ack_url.startswith("https://cowen.vercel.app") else None)
-    )
-    header_str = f"Content-Type: application/x-www-form-urlencoded,X-Router-Token: {raw_token}"
-    if bypass_secret:
-        header_str += f",x-vercel-protection-bypass: {bypass_secret}"
+    clean_token = raw_token.strip().replace('"', '').replace('\\', '').replace('$', '')
+    header_str = f"Content-Type: application/x-www-form-urlencoded,X-Router-Token: {clean_token}"
     q_ack_header = quote_routeros(header_str)
 
     lines.append(
         f":local ackData (\"ok=\" . $ok . \"&failed=\" . $failed);\n"
         f":do {{/tool fetch url={q_ack_url} http-method=post "
         f"http-header-field={q_ack_header} "
-        f"http-data=$ackData check-certificate=no output=none;\n"
+        f"http-data=$ackData check-certificate=yes-without-crl output=none;\n"
         f":log info \"COwen_Sync: batch commands executed and acknowledged\";}} "
         f"on-error={{:log warning \"COwen_Sync: could not report results\"}}"
     )
@@ -1699,13 +1724,38 @@ async def router_sync_endpoint(
     if client_host:
         router.ip_address = client_host
 
-    # Fetch queued pending commands strictly scoped to this router and tenant
-    pending_commands = db.scalars(
+    now_ts = datetime.now(timezone.utc)
+    retry_timeout_seconds = 120
+    max_attempts = 3
+
+    # Mark timed-out sent commands that exceeded max_attempts as failed
+    timed_out_commands = db.scalars(
+        select(RouterCommand).where(
+            RouterCommand.router_id == router.id,
+            RouterCommand.tenant_id == router.tenant_id,
+            RouterCommand.status == RouterCommandStatus.sent,
+            RouterCommand.attempts >= max_attempts,
+            RouterCommand.sent_at <= now_ts - timedelta(seconds=retry_timeout_seconds),
+        )
+    ).all()
+    for f_cmd in timed_out_commands:
+        f_cmd.status = RouterCommandStatus.failed
+        f_cmd.finished_at = now_ts
+
+    # Fetch queued pending commands OR retryable sent commands
+    candidate_commands = db.scalars(
         select(RouterCommand)
         .where(
             RouterCommand.router_id == router.id,
             RouterCommand.tenant_id == router.tenant_id,
-            RouterCommand.status == RouterCommandStatus.pending,
+            or_(
+                RouterCommand.status == RouterCommandStatus.pending,
+                and_(
+                    RouterCommand.status == RouterCommandStatus.sent,
+                    RouterCommand.attempts < max_attempts,
+                    RouterCommand.sent_at <= now_ts - timedelta(seconds=retry_timeout_seconds),
+                ),
+            ),
         )
         .order_by(RouterCommand.created_at.asc())
         .limit(20)
@@ -1717,8 +1767,7 @@ async def router_sync_endpoint(
 
     batch: list[RouterCommand] = []
     total_size = 0
-    now_ts = datetime.now(timezone.utc)
-    for cmd in pending_commands:
+    for cmd in candidate_commands:
         cost = len(cmd.script) + 120
         if batch and (total_size + cost > limit_bytes):
             break
@@ -1838,5 +1887,32 @@ async def router_command_result_endpoint(
     cmd.status = RouterCommandStatus.done if cmd_status == "done" else RouterCommandStatus.failed
     cmd.finished_at = datetime.now(timezone.utc)
     db.commit()
+
+
+@tenant_router.post("/tenant/routers/commands/{command_id}/retry", dependencies=[Depends(verify_csrf_token)])
+def tenant_router_command_retry(
+    command_id: str,
+    request: Request,
+    context: TenantContext = Depends(require_tenant_context),
+    db: Session = Depends(get_saas_db),
+):
+    """Retries a failed router command by resetting it to pending status."""
+    cmd = db.scalar(
+        select(RouterCommand).where(
+            RouterCommand.id == command_id,
+            RouterCommand.tenant_id == context.tenant.id,
+        )
+    )
+    if not cmd:
+        raise HTTPException(status_code=404, detail="Command not found.")
+
+    cmd.status = RouterCommandStatus.pending
+    cmd.attempts = 0
+    cmd.sent_at = None
+    cmd.finished_at = None
+    db.commit()
+
+    set_flash(request, msg=f"Command '{cmd.description}' re-queued for synchronization.")
+    return RedirectResponse(url="/tenant/dashboard", status_code=status.HTTP_303_SEE_OTHER)
 
     return {"status": "recorded", "command_id": cmd.id, "command_status": cmd.status.value}

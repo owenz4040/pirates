@@ -42,32 +42,7 @@ from saas.security.sanitizer import (
     validate_rate_limit,
 )
 
-test_engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
 
-
-@pytest.fixture(scope="module", autouse=True)
-def setup_test_db():
-    SaasBase.metadata.create_all(bind=test_engine)
-    yield
-    SaasBase.metadata.drop_all(bind=test_engine)
-
-
-@pytest.fixture
-def db_session():
-    connection = test_engine.connect()
-    transaction = connection.begin()
-    session = TestingSessionLocal(bind=connection)
-    app.dependency_overrides[get_saas_db] = lambda: session
-    yield session
-    session.close()
-    transaction.rollback()
-    connection.close()
-
-
-@pytest.fixture
-def client(db_session):
-    return TestClient(app)
 
 
 def make_tenant(db, name, slug):
@@ -744,7 +719,7 @@ def test_router_command_pipeline_and_subscriber_lifecycle():
     # 1. Profile upsert command
     prof_cmd = build_pppoe_profile_command("10M-Residential", "10M/10M")
     assert '/ppp profile add name="10M-Residential" rate-limit="10M/10M"' in prof_cmd
-    assert '/ppp profile set [find where name="10M-Residential"] rate-limit="10M/10M"' in prof_cmd
+    assert '/ppp profile set [find where name="10M-Residential" and comment="COwen Managed Profile"] rate-limit="10M/10M"' in prof_cmd
 
     # 2. Suspend command kicks active session
     disable_cmd = build_pppoe_disable_command("user_test")
@@ -759,7 +734,7 @@ def test_router_command_pipeline_and_subscriber_lifecycle():
     delete_cmd = build_pppoe_delete_command("user_test")
     assert '/ppp secret remove [find where name="user_test"]' in delete_cmd
 
-    # 5. Batch rendering includes ack, check-certificate=no, and preview bypass
+    # 5. Batch rendering includes ack, check-certificate=yes-without-crl, and zero bypass secrets
     cmd = RouterCommand(
         id="cmd-123",
         tenant_id="t-1",
@@ -771,9 +746,339 @@ def test_router_command_pipeline_and_subscriber_lifecycle():
     batch_text = render_router_batch([cmd], "https://cowen-preview.vercel.app/api/router/ack", "raw-token-abc")
     assert "# COwen-Batch-OK" in batch_text
     assert "cmd-123" in batch_text
-    assert "check-certificate=no" in batch_text
-    assert "x-vercel-protection-bypass:" in batch_text
+    assert "check-certificate=yes-without-crl" in batch_text
+    assert "check-certificate=no" not in batch_text
+    assert "x-vercel-protection-bypass" not in batch_text
+    assert "X-Router-Token: raw-token-abc" in batch_text
     assert ":local ackData" in batch_text
+
+
+# =====================================================================
+# 8. Physical Provisioning & Delivery State Machine Regression Tests
+# =====================================================================
+
+def test_pppoe_profile_and_subscriber_provisioning(client, db_session, seed_data):
+    """Verifies PPPoE plan queues profile upsert, and subscriber queues profile before secret."""
+    user_a = seed_data["user_a"]
+    router_a = seed_data["router_a"]
+    headers = {"Authorization": f"Bearer {user_a.id}"}
+
+    # 1. Add plan queues profile command to active router
+    resp = client.post(
+        "/tenant/pppoe/plans/add",
+        data={
+            "name": "50 Mbps Enterprise",
+            "rate_limit": "50M/50M",
+            "price_kes": 5000.0,
+            "duration_days": 30,
+        },
+        headers=headers,
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    plan = db_session.scalar(select(PPPoEPlan).where(PPPoEPlan.name == "50 Mbps Enterprise"))
+    assert plan is not None
+
+    plan_cmd = db_session.scalar(
+        select(RouterCommand).where(
+            RouterCommand.router_id == router_a.id,
+            RouterCommand.description == "Provision PPP profile: 50 Mbps Enterprise",
+        )
+    )
+    assert plan_cmd is not None
+    assert '/ppp profile add name="50 Mbps Enterprise" rate-limit="50M/50M"' in plan_cmd.script
+    assert 'comment="COwen Managed Profile"' in plan_cmd.script
+
+    # 2. Add subscriber queues combined profile and secret command
+    resp2 = client.post(
+        "/tenant/pppoe/subscribers/add",
+        data={
+            "router_id": router_a.id,
+            "plan_id": plan.id,
+            "username": "corp_sub_01",
+            "password": "SecureSubPass1",
+            "full_name": "Acme Corp Branch",
+            "connection_type": "pppoe",
+        },
+        headers=headers,
+        follow_redirects=False,
+    )
+    assert resp2.status_code == 303
+
+    sub_cmd = db_session.scalar(
+        select(RouterCommand).where(
+            RouterCommand.router_id == router_a.id,
+            RouterCommand.description.like("%corp_sub_01%"),
+        )
+    )
+    assert sub_cmd is not None
+    # Verify profile creation precedes secret creation in the script
+    prof_pos = sub_cmd.script.find("/ppp profile")
+    secret_pos = sub_cmd.script.find("/ppp secret")
+    assert prof_pos != -1 and secret_pos != -1 and prof_pos < secret_pos
+
+
+def test_profile_conflict_preserves_unmanaged_profiles():
+    """Verifies that conflict-safe profile generators never overwrite unmanaged profiles."""
+    from saas.security.sanitizer import (
+        build_pppoe_profile_command,
+        build_hotspot_profile_command,
+    )
+
+    # PPPoE profile: check-then-set only if comment matches COwen
+    pppoe_cmd = build_pppoe_profile_command("existing-isp-profile", "20M/20M")
+    assert 'and comment="COwen Managed Profile"' in pppoe_cmd
+    assert 'else={:if ([:len [/ppp profile find where name="existing-isp-profile" and comment="COwen Managed Profile"]] > 0)' in pppoe_cmd
+
+    # Hotspot profile: check-then-set only if comment matches COwen
+    hotspot_cmd = build_hotspot_profile_command("existing-hotspot-pkg", "5M/5M")
+    assert 'and comment="COwen Managed Profile"' in hotspot_cmd
+    assert 'else={:if ([:len [/ip hotspot user profile find where name="existing-hotspot-pkg" and comment="COwen Managed Profile"]] > 0)' in hotspot_cmd
+
+
+def test_hotspot_voucher_five_voucher_chunking(client, db_session, seed_data):
+    """Verifies that generating vouchers creates 5-voucher chunks with profile prepended."""
+    user_a = seed_data["user_a"]
+    router_a = seed_data["router_a"]
+    tenant_a = seed_data["tenant_a"]
+    pkg_a = db_session.scalar(select(HotspotPackage).where(HotspotPackage.tenant_id == tenant_a.id))
+    headers = {"Authorization": f"Bearer {user_a.id}"}
+
+    # Generate 12 vouchers (should result in 3 chunks: 5, 5, 2)
+    resp = client.post(
+        "/tenant/hotspot/vouchers/generate",
+        data={
+            "package_id": pkg_a.id,
+            "quantity": 12,
+            "router_id": router_a.id,
+        },
+        headers=headers,
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    chunks = db_session.scalars(
+        select(RouterCommand)
+        .where(
+            RouterCommand.router_id == router_a.id,
+            RouterCommand.description.like("%chunk%"),
+        )
+        .order_by(RouterCommand.created_at.asc())
+    ).all()
+
+    assert len(chunks) == 3
+    assert "chunk 1/3" in chunks[0].description
+    assert "Add 5 hotspot vouchers" in chunks[0].description
+    assert "chunk 2/3" in chunks[1].description
+    assert "Add 5 hotspot vouchers" in chunks[1].description
+    assert "chunk 3/3" in chunks[2].description
+    assert "Add 2 hotspot vouchers" in chunks[2].description
+
+    # Each chunk must have profile command prepended
+    for chunk in chunks:
+        assert "/ip hotspot user profile" in chunk.script
+        assert "/ip hotspot user" in chunk.script
+        assert chunk.status == RouterCommandStatus.pending
+
+
+def test_command_delivery_state_machine_retry_and_timeout(client, db_session, seed_data):
+    """Verifies the state machine: pending -> sent -> retry after 120s -> failed after 3 attempts."""
+    router_a = seed_data["router_a"]
+    tenant_a = seed_data["tenant_a"]
+
+    cmd = RouterCommand(
+        tenant_id=tenant_a.id,
+        router_id=router_a.id,
+        description="State machine test command",
+        script='/system identity set name="TestSM"',
+        status=RouterCommandStatus.pending,
+    )
+    db_session.add(cmd)
+    db_session.commit()
+
+    raw_token = "alpha_token_1"
+    headers = {"X-Router-Token": raw_token}
+
+    # 1. First sync poll dispatches command (attempts = 1, status = sent)
+    resp1 = client.post("/api/router/sync", headers=headers)
+    assert resp1.status_code == 200
+    db_session.refresh(cmd)
+    assert cmd.status == RouterCommandStatus.sent
+    assert cmd.attempts == 1
+    assert cmd.sent_at is not None
+
+    # 2. Immediate second poll within 120s does NOT re-dispatch unacknowledged command
+    resp2 = client.post("/api/router/sync", headers=headers)
+    assert resp2.status_code == 200
+    db_session.refresh(cmd)
+    assert cmd.attempts == 1
+
+    # 3. Simulate 121 seconds passing without ACK -> poll retries command (attempts = 2)
+    cmd.sent_at = datetime.now(timezone.utc) - timedelta(seconds=125)
+    db_session.commit()
+
+    resp3 = client.post("/api/router/sync", headers=headers)
+    assert resp3.status_code == 200
+    db_session.refresh(cmd)
+    assert cmd.status == RouterCommandStatus.sent
+    assert cmd.attempts == 2
+
+    # 4. Simulate third dispatch
+    cmd.sent_at = datetime.now(timezone.utc) - timedelta(seconds=125)
+    db_session.commit()
+
+    resp4 = client.post("/api/router/sync", headers=headers)
+    assert resp4.status_code == 200
+    db_session.refresh(cmd)
+    assert cmd.status == RouterCommandStatus.sent
+    assert cmd.attempts == 3
+
+    # 5. After max 3 attempts + 120s timeout, next poll marks command as failed
+    cmd.sent_at = datetime.now(timezone.utc) - timedelta(seconds=125)
+    db_session.commit()
+
+    resp5 = client.post("/api/router/sync", headers=headers)
+    assert resp5.status_code == 200
+    db_session.refresh(cmd)
+    assert cmd.status == RouterCommandStatus.failed
+    assert cmd.finished_at is not None
+
+
+def test_command_acknowledgement_idempotency_and_tenant_isolation(client, db_session, seed_data):
+    """Verifies that ACK updates command status safely, idempotently, and enforces tenant scoping."""
+    router_a = seed_data["router_a"]
+    router_b = seed_data["router_b"]
+    tenant_a = seed_data["tenant_a"]
+    tenant_b = seed_data["tenant_b"]
+
+    cmd_a = RouterCommand(
+        tenant_id=tenant_a.id,
+        router_id=router_a.id,
+        description="Tenant A Command",
+        script="/tool fetch ...",
+        status=RouterCommandStatus.sent,
+        attempts=1,
+    )
+    cmd_b = RouterCommand(
+        tenant_id=tenant_b.id,
+        router_id=router_b.id,
+        description="Tenant B Command",
+        script="/tool fetch ...",
+        status=RouterCommandStatus.sent,
+        attempts=1,
+    )
+    db_session.add_all([cmd_a, cmd_b])
+    db_session.commit()
+
+    # Router A reports execution of cmd_a (ok) and maliciously attempts to ack cmd_b
+    headers = {"X-Router-Token": "alpha_token_1"}
+    resp = client.post(
+        "/api/router/ack",
+        data={"ok": f"{cmd_a.id},{cmd_b.id}"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+
+    db_session.refresh(cmd_a)
+    db_session.refresh(cmd_b)
+    # cmd_a should be done
+    assert cmd_a.status == RouterCommandStatus.done
+    assert cmd_a.finished_at is not None
+    # cmd_b must NOT be marked done by Router A (cross-tenant isolation)
+    assert cmd_b.status == RouterCommandStatus.sent
+
+    # Duplicate / repeated ACK call is idempotent
+    resp_dup = client.post(
+        "/api/router/ack",
+        data={"ok": f"{cmd_a.id}"},
+        headers=headers,
+    )
+    assert resp_dup.status_code == 200
+    db_session.refresh(cmd_a)
+    assert cmd_a.status == RouterCommandStatus.done
+
+
+def test_tenant_failed_command_retry_action(client, db_session, seed_data):
+    """Verifies tenant dashboard command retry resets command to pending."""
+    user_a = seed_data["user_a"]
+    user_b = seed_data["user_b"]
+    router_a = seed_data["router_a"]
+    tenant_a = seed_data["tenant_a"]
+
+    failed_cmd = RouterCommand(
+        tenant_id=tenant_a.id,
+        router_id=router_a.id,
+        description="Failed PPPoE script",
+        script="/ppp secret add ...",
+        status=RouterCommandStatus.failed,
+        attempts=3,
+        finished_at=datetime.now(timezone.utc),
+    )
+    db_session.add(failed_cmd)
+    db_session.commit()
+
+    headers_a = {"Authorization": f"Bearer {user_a.id}"}
+    headers_b = {"Authorization": f"Bearer {user_b.id}"}
+
+    # Cross-tenant retry attempt must fail with 404
+    resp_cross = client.post(
+        f"/tenant/routers/commands/{failed_cmd.id}/retry",
+        headers=headers_b,
+        follow_redirects=False,
+    )
+    assert resp_cross.status_code == 404
+
+    # Legitimate tenant retry succeeds
+    resp_retry = client.post(
+        f"/tenant/routers/commands/{failed_cmd.id}/retry",
+        headers=headers_a,
+        follow_redirects=False,
+    )
+    assert resp_retry.status_code == 303
+
+    db_session.refresh(failed_cmd)
+    assert failed_cmd.status == RouterCommandStatus.pending
+    assert failed_cmd.attempts == 0
+    assert failed_cmd.sent_at is None
+    assert failed_cmd.finished_at is None
+
+
+def test_routeros_tls_strict_verification_and_zero_bypass_secrets():
+    """Verifies strict TLS verification and complete absence of bypass secrets in all script generators."""
+    from saas.security.sanitizer import (
+        ISRG_ROOT_X1_SHA256,
+        ISRG_ROOT_X1_PEM,
+        build_mikrotik_rsc_file,
+        build_mikrotik_sync_script_source,
+        build_mikrotik_terminal_commands,
+    )
+
+    url = "https://cowen.vercel.app/api/router/sync"
+    token = "strict-tls-test-token"
+    router_name = "Core-hAP-lite"
+
+    # 1. Sync script source
+    source = build_mikrotik_sync_script_source(url, token)
+    assert "check-certificate=yes-without-crl" in source
+    assert "check-certificate=no" not in source
+    assert "x-vercel-protection-bypass" not in source
+
+    # 2. RSC file
+    rsc = build_mikrotik_rsc_file(url, token, router_name)
+    assert "check-certificate=yes-without-crl" in rsc
+    assert "check-certificate=no" not in rsc
+    assert "x-vercel-protection-bypass" not in rsc
+    assert ISRG_ROOT_X1_SHA256 in rsc
+    assert "/file remove [find name=\"cowen_rootca.txt\"]" in rsc
+    assert ":do { /certificate enable-ssl-certificate }" in rsc
+
+    # 3. Terminal commands
+    term = build_mikrotik_terminal_commands(url, token, router_name)
+    assert "check-certificate=yes-without-crl" in term
+    assert "check-certificate=no" not in term
+    assert "x-vercel-protection-bypass" not in term
+
 
 
 
