@@ -799,6 +799,21 @@ def tenant_router_download_rsc(
     )
 
 
+@tenant_router.get("/tenant/routers/isrgrootx1.crt")
+def tenant_router_download_isrg_root_crt(request: Request):
+    """Downloads the verified official ISRG Root X1 CA certificate file for WinBox upload."""
+    from saas.security.sanitizer import ISRG_ROOT_X1_PEM
+    raw_pem = ISRG_ROOT_X1_PEM.replace("\\r\\n", "\r\n")
+    return Response(
+        content=raw_pem,
+        media_type="application/x-x509-ca-cert",
+        headers={
+            "Content-Disposition": 'attachment; filename="isrgrootx1.crt"',
+            "Cache-Control": "public, max-age=86400",
+        },
+    )
+
+
 
 
 # =====================================================================

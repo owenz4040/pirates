@@ -316,11 +316,10 @@ def build_mikrotik_rsc_file(
 ) -> str:
     """Generates a downloadable, self-contained RouterOS .rsc configuration script.
 
-    Compatible with RouterOS 7.x (including 7.25.1) and RouterOS 6.49+.
+    Universal compatibility for RouterOS 6.49+ and RouterOS 7.x (including SMIPS architecture).
     Enforces strict TLS verification via check-certificate=yes-without-crl.
-    On RouterOS 7, automatically enables official Mozilla root trust store.
-    On RouterOS 6, imports verified Let's Encrypt ISRG Root X1 CA and marks trusted,
-    then removes temporary files immediately to leave zero flash residue.
+    Ensures network time synchronization (SNTP) is enabled so TLS cert validity checks succeed.
+    Verifies that the official Let's Encrypt ISRG Root X1 CA is installed and trusted.
     Can be imported safely using: /import file-name=cowen_setup.rsc
     """
     clean_name = validate_plan_name(router_name)
@@ -331,14 +330,19 @@ def build_mikrotik_rsc_file(
         f"# COwen ISP SaaS — MikroTik RouterOS Setup Configuration\n"
         f"# Target Router: {clean_name}\n"
         f"# Cloud Endpoint: {sync_url}\n"
-        f"# Architecture: Outbound HTTPS Polling (Strict TLS on Port 443)\n"
-        f"# Compatibility: RouterOS 6.49+ & RouterOS 7.x\n"
+        f"# Architecture: Outbound HTTPS Polling (Strict TLS Port 443 in RAM)\n"
+        f"# Compatibility: RouterOS 6.49+ & RouterOS 7.x (SMIPS, MIPSBE, ARM, x86)\n"
         f"# =====================================================================\n\n"
-        f"# Step 1: RouterOS 7 — Enable native SSL root certificates\n"
-        f":do {{ /certificate enable-ssl-certificate }} on-error={{\n"
-        f"    :log info \"COwen_Sync: enable-ssl-certificate not supported on RouterOS 6 (using imported root CA)\"\n"
+        f"# Step 1: Ensure router clock is synchronized via SNTP / NTP\n"
+        f"# TLS certificate verification requires an accurate system clock.\n"
+        f":do {{\n"
+        f"    /system ntp client set enabled=yes primary-ntp=129.6.15.28 secondary-ntp=132.163.96.1\n"
+        f"}} on-error={{\n"
+        f"    :do {{ /system ntp client set enabled=yes servers=pool.ntp.org }} on-error={{\n"
+        f"        :log warning \"COwen_Sync: NTP client configuration skipped\"\n"
+        f"    }}\n"
         f"}}\n\n"
-        f"# Step 2: RouterOS 6 — Ensure official ISRG Root X1 CA is installed and trusted\n"
+        f"# Step 2: Ensure official ISRG Root X1 CA is installed and trusted for TLS verification\n"
         f":if ([:len [/certificate find where fingerprint=\"{ISRG_ROOT_X1_SHA256}\"]] = 0) do={{\n"
         f"    :do {{\n"
         f"        /file print file=\"cowen_rootca\"\n"
@@ -349,8 +353,10 @@ def build_mikrotik_rsc_file(
         f"        /certificate set [find where fingerprint=\"{ISRG_ROOT_X1_SHA256}\"] trusted=yes\n"
         f"        :log info \"COwen_Sync: ISRG Root X1 certificate imported and trusted\"\n"
         f"    }} on-error={{\n"
-        f"        :log warning \"COwen_Sync: Root CA import failed or not needed\"\n"
+        f"        :log warning \"COwen_Sync: Root CA inline import skipped (upload isrgrootx1.crt if not present)\"\n"
         f"    }}\n"
+        f"}} else={{\n"
+        f"    /certificate set [find where fingerprint=\"{ISRG_ROOT_X1_SHA256}\"] trusted=yes\n"
         f"}}\n\n"
         f"# Step 3: Remove any previous synchronization script and scheduler safely\n"
         f":do {{ /system script remove [find name=\"COwen_Sync_Script\"] }} on-error={{}}\n"
@@ -378,7 +384,6 @@ def build_mikrotik_terminal_commands(
     return (
         f"# MikroTik RouterOS Outbound HTTPS Synchronization Setup\n"
         f"# Device: {clean_name}\n"
-        f":do {{ /certificate enable-ssl-certificate }} on-error={{}}\n"
         f":do {{ /system script remove [find name=\"COwen_Sync_Script\"] }} on-error={{}}\n"
         f":do {{ /system scheduler remove [find name=\"COwen_Sync\"] }} on-error={{}}\n"
         f"/system script add name=\"COwen_Sync_Script\" comment=\"COwen ISP SaaS Cloud Sync\" source=\"{script_source}\"\n"

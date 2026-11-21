@@ -531,8 +531,8 @@ def test_routeros_setup_script_structure_and_signature_check():
         router_name="Main-Core-Router",
     )
 
-    # 1. Verification of HTTPS CA certificate prerequisite: uses official RouterOS 7 trust store
-    assert "/certificate enable-ssl-certificate" in script
+    # 1. Verification of HTTPS CA certificate prerequisite: no incorrect ACME commands or untrusted external downloads
+    assert "/certificate enable-ssl-certificate" not in script
     assert "curl.se" not in script
     assert "cacert.pem" not in script
 
@@ -1071,13 +1071,26 @@ def test_routeros_tls_strict_verification_and_zero_bypass_secrets():
     assert "x-vercel-protection-bypass" not in rsc
     assert ISRG_ROOT_X1_SHA256 in rsc
     assert "/file remove [find name=\"cowen_rootca.txt\"]" in rsc
-    assert ":do { /certificate enable-ssl-certificate }" in rsc
+    assert "/certificate enable-ssl-certificate" not in rsc
+    assert "primary-ntp=" in rsc or "servers=pool.ntp.org" in rsc
 
     # 3. Terminal commands
     term = build_mikrotik_terminal_commands(url, token, router_name)
     assert "check-certificate=yes-without-crl" in term
     assert "check-certificate=no" not in term
     assert "x-vercel-protection-bypass" not in term
+    assert "/certificate enable-ssl-certificate" not in term
+
+
+def test_isrg_root_ca_crt_download(client):
+    """Verifies the direct download endpoint for ISRG Root X1 CA cert for WinBox upload."""
+    resp = client.get("/tenant/routers/isrgrootx1.crt")
+    assert resp.status_code == 200
+    assert "application/x-x509-ca-cert" in resp.headers["content-type"]
+    assert "isrgrootx1.crt" in resp.headers.get("content-disposition", "")
+    assert "BEGIN CERTIFICATE" in resp.text
+    assert "END CERTIFICATE" in resp.text
+
 
 
 
