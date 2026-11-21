@@ -1,3 +1,3 @@
-"""Vercel entrypoint - Vercel looks for a FastAPI `app` in a root index.py."""
+"""Vercel entrypoint for COwen Multi-Tenant ISP Billing SaaS Platform."""
 
-from billing.main import app  # noqa: F401
+from saas.app import app  # noqa: F401
