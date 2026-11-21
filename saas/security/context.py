@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, TypeVar
 
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -85,6 +86,33 @@ def resolve_tenant_context(
     user: TenantUser | None = None
     if user_id:
         user = db.scalar(select(TenantUser).where(TenantUser.id == user_id, TenantUser.is_active == True))
+        if user and "session" in request.scope:
+            now_ts = int(datetime.now(timezone.utc).timestamp())
+            stored_version = request.session.get("session_version")
+            if stored_version is not None and stored_version != user.session_version:
+                request.session.clear()
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Session invalidated due to password change or revocation.",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            login_time = request.session.get("tenant_login_time")
+            if login_time and (now_ts - int(login_time) > 86400):
+                request.session.clear()
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Session expired (absolute lifetime limit of 24 hours exceeded).",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            last_activity = request.session.get("tenant_last_activity")
+            if last_activity and (now_ts - int(last_activity) > 43200):
+                request.session.clear()
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Session expired due to inactivity (12 hours limit exceeded).",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            request.session["tenant_last_activity"] = now_ts
 
     if not user:
         # Check Authorization header bearer token or fallback for testing / internal calls

@@ -962,10 +962,22 @@ def tenant_pppoe_subscriber_add(
         )
     )
     if existing:
-        set_flash(request, error=f"Username '{clean_username}' already exists for another subscriber.")
+        set_flash(request, error=f"Username '{clean_username}' already exists for another subscriber in your account.")
         return RedirectResponse(url="/tenant/pppoe", status_code=status.HTTP_303_SEE_OTHER)
 
+    existing_on_router = db.scalar(
+        select(PPPoECustomer).where(
+            PPPoECustomer.router_id == router.id,
+            PPPoECustomer.username == clean_username,
+        )
+    )
+    if existing_on_router:
+        set_flash(request, error=f"Username '{clean_username}' already exists on router '{router.name}'.")
+        return RedirectResponse(url="/tenant/pppoe", status_code=status.HTTP_303_SEE_OTHER)
+
+    customer_id = str(uuid.uuid4())
     customer = PPPoECustomer(
+        id=customer_id,
         tenant_id=context.tenant.id,
         router_id=router.id,
         plan_id=plan.id,
@@ -980,7 +992,7 @@ def tenant_pppoe_subscriber_add(
     )
     db.add(customer)
 
-    # Generate safe, injection-proof, idempotent RouterOS command
+    # Generate safe, injection-proof, idempotent RouterOS command with immutable subscriber ownership marker
     profile_script = build_pppoe_profile_command(
         name=plan.name,
         rate_limit=plan.rate_limit,
@@ -990,7 +1002,8 @@ def tenant_pppoe_subscriber_add(
         password=clean_password,
         profile=plan.name,
         service="pppoe",
-        comment=clean_comment,
+        subscriber_id=customer_id,
+        comment=f"COwen-PPPoE:{customer_id}",
     )
     cmd_script = f"{profile_script}; {secret_script}"
     command = RouterCommand(
@@ -1027,12 +1040,12 @@ def tenant_pppoe_subscriber_toggle_status(
     if sub.status == CustomerStatus.active:
         sub.status = CustomerStatus.suspended
         new_state_label = "suspended"
-        script = build_pppoe_disable_command(sub.username)
+        script = build_pppoe_disable_command(sub.username, subscriber_id=sub.id)
         desc = f"Suspend PPPoE subscriber: {sub.username}"
     else:
         sub.status = CustomerStatus.active
         new_state_label = "activated"
-        script = build_pppoe_enable_command(sub.username)
+        script = build_pppoe_enable_command(sub.username, subscriber_id=sub.id)
         desc = f"Activate PPPoE subscriber: {sub.username}"
 
     if sub.router_id:
@@ -1075,7 +1088,7 @@ def tenant_pppoe_subscriber_delete(
             tenant_id=context.tenant.id,
             router_id=router_id,
             description=f"Remove PPPoE secret: {username}",
-            script=build_pppoe_delete_command(username),
+            script=build_pppoe_delete_command(username, subscriber_id=subscriber_id),
             status=RouterCommandStatus.pending,
         )
         db.add(cmd)
@@ -1247,8 +1260,10 @@ def tenant_hotspot_vouchers_generate(
     for _ in range(qty):
         charset = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
         code = "".join(secrets.choice(charset) for _ in range(6))
+        voucher_id = str(uuid.uuid4())
 
         voucher = HotspotVoucher(
+            id=voucher_id,
             tenant_id=context.tenant.id,
             package_id=pkg.id,
             router_id=target_router.id if target_router else None,
@@ -1263,7 +1278,7 @@ def tenant_hotspot_vouchers_generate(
                 code=code,
                 password=code,
                 profile=pkg.name,
-                comment=f"Batch {batch_id}",
+                voucher_id=voucher_id,
             )
             commands_to_queue.append(cmd)
 
@@ -1773,7 +1788,7 @@ async def router_sync_endpoint(
             ),
         )
         .order_by(RouterCommand.created_at.asc())
-        .limit(20)
+        .limit(50)
     ).all()
 
     # Determine batch size limit based on RouterOS version

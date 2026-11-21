@@ -51,7 +51,7 @@ app.add_middleware(
     SessionMiddleware,
     secret_key=saas_settings.effective_session_secret,
     session_cookie="saas_session",
-    max_age=86400 * 7,  # 7 days
+    max_age=86400,  # 24 hours absolute maximum session lifetime
     https_only=is_production,
     same_site="lax",
 )

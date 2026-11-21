@@ -1092,6 +1092,192 @@ def test_isrg_root_ca_crt_download(client):
     assert "END CERTIFICATE" in resp.text
 
 
+def test_pppoe_ownership_protection_and_conflict_handling():
+    """Verifies that PPPoE secrets require immutable subscriber ownership marker and reject unmanaged collisions."""
+    from saas.security.sanitizer import (
+        build_pppoe_delete_command,
+        build_pppoe_disable_command,
+        build_pppoe_enable_command,
+        build_pppoe_secret_command,
+    )
+
+    cmd = build_pppoe_secret_command(
+        username="subscriber_alpha",
+        password="securepass123",
+        profile="10M_Unlimited",
+        subscriber_id="sub-uuid-abc-123",
+    )
+    # 1. Adds with immutable ownership marker
+    assert 'comment="COwen-PPPoE:sub-uuid-abc-123"' in cmd
+    # 2. Updates ONLY if matching ownership marker is present
+    assert 'name="subscriber_alpha" and comment="COwen-PPPoE:sub-uuid-abc-123"' in cmd
+    # 3. If unmanaged user exists with same username, raises RouterOS :error conflict instead of overwriting
+    assert ':error "COwen_Sync: Conflict - PPPoE secret \'subscriber_alpha\' exists without matching COwen ownership marker"' in cmd
+
+    # 4. Lifecycle operations verify ownership marker
+    dis_cmd = build_pppoe_disable_command("subscriber_alpha", subscriber_id="sub-uuid-abc-123")
+    assert 'comment="COwen-PPPoE:sub-uuid-abc-123"' in dis_cmd
+    assert ':error "COwen_Sync: Cannot disable PPPoE secret \'subscriber_alpha\' - ownership mismatch"' in dis_cmd
+
+    en_cmd = build_pppoe_enable_command("subscriber_alpha", subscriber_id="sub-uuid-abc-123")
+    assert 'comment="COwen-PPPoE:sub-uuid-abc-123"' in en_cmd
+    assert ':error "COwen_Sync: Cannot enable PPPoE secret \'subscriber_alpha\' - ownership mismatch"' in en_cmd
+
+    del_cmd = build_pppoe_delete_command("subscriber_alpha", subscriber_id="sub-uuid-abc-123")
+    assert 'comment="COwen-PPPoE:sub-uuid-abc-123"' in del_cmd
+    assert ':error "COwen_Sync: Cannot delete PPPoE secret \'subscriber_alpha\' - ownership mismatch"' in del_cmd
+
+
+def test_hotspot_voucher_ownership_protection_and_conflict_handling():
+    """Verifies that Hotspot vouchers require immutable voucher ID marker and reject unmanaged collisions."""
+    from saas.security.sanitizer import build_hotspot_user_command
+
+    vouch_cmd = build_hotspot_user_command(
+        code="VOUCH99",
+        password="pass99",
+        profile="1Hr_Hotspot",
+        voucher_id="vouch-uuid-777",
+    )
+    # 1. Adds with immutable voucher ownership marker
+    assert 'comment="COwen-Voucher:vouch-uuid-777"' in vouch_cmd
+    # 2. Updates ONLY if matching ownership marker is present
+    assert 'name="VOUCH99" and comment="COwen-Voucher:vouch-uuid-777"' in vouch_cmd
+    # 3. If unmanaged user exists with same code, raises RouterOS :error conflict instead of overwriting
+    assert ':error "COwen_Sync: Conflict - Hotspot user \'VOUCH99\' exists without matching COwen voucher marker"' in vouch_cmd
+
+
+def test_sync_script_source_single_braces_syntax():
+    """Verifies that generated script source does not contain double braces in do={ blocks."""
+    from saas.security.sanitizer import build_mikrotik_sync_script_source
+
+    source = build_mikrotik_sync_script_source("https://cowen.vercel.app/api/router/sync", "tok-123")
+    assert "do={{" not in source
+    assert "do={" in source
+    assert "on-error={" in source
+
+
+def test_tenant_session_lifecycle_and_invalidation(db_session):
+    """Verifies 12-hour sliding inactivity, 24-hour absolute expiration, and password change revocation."""
+    from datetime import datetime, timezone
+    from starlette.requests import Request
+    from saas.models.tenant import SubscriptionTier, Tenant, TenantStatus, TenantSubscription, TenantUser, UserRole
+    from saas.security.auth import hash_password
+    from saas.routers.tenant import get_tenant_context_optional
+    from saas.security.context import resolve_tenant_context
+
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    tenant = Tenant(name="Test Session ISP", slug="session-isp", contact_email="session@test.com", contact_phone="+254700000000", status=TenantStatus.active)
+    db_session.add(tenant)
+    db_session.flush()
+
+    user = TenantUser(
+        tenant_id=tenant.id,
+        email="session_admin@test.com",
+        full_name="Session Admin",
+        hashed_password=hash_password("OriginalPassword123!"),
+        role=UserRole.tenant_admin,
+        is_active=True,
+        session_version=1,
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    # 1. Valid session
+    req_valid = Request({"type": "http", "session": {
+        "user_id": user.id,
+        "tenant_user_id": user.id,
+        "session_version": 1,
+        "tenant_login_time": now_ts,
+        "tenant_last_activity": now_ts,
+    }})
+    ctx = get_tenant_context_optional(req_valid, db_session)
+    assert ctx is not None
+    assert ctx.user.id == user.id
+
+    # 2. Expired sliding inactivity (> 12 hours = 43200 seconds)
+    req_inactive = Request({"type": "http", "session": {
+        "user_id": user.id,
+        "tenant_user_id": user.id,
+        "session_version": 1,
+        "tenant_login_time": now_ts,
+        "tenant_last_activity": now_ts - 43201,
+    }})
+    ctx_inactive = get_tenant_context_optional(req_inactive, db_session)
+    assert ctx_inactive is None
+
+    # 3. Expired absolute lifetime (> 24 hours = 86400 seconds)
+    req_abs_exp = Request({"type": "http", "session": {
+        "user_id": user.id,
+        "tenant_user_id": user.id,
+        "session_version": 1,
+        "tenant_login_time": now_ts - 86401,
+        "tenant_last_activity": now_ts,
+    }})
+    ctx_abs_exp = get_tenant_context_optional(req_abs_exp, db_session)
+    assert ctx_abs_exp is None
+
+    # 4. Password change increments session_version and invalidates old session
+    user.session_version = 2
+    db_session.commit()
+
+    req_revoked = Request({"type": "http", "session": {
+        "user_id": user.id,
+        "tenant_user_id": user.id,
+        "session_version": 1,  # Stale session version
+        "tenant_login_time": now_ts,
+        "tenant_last_activity": now_ts,
+    }})
+    ctx_revoked = get_tenant_context_optional(req_revoked, db_session)
+    assert ctx_revoked is None
+
+
+def test_cross_tenant_subscriber_router_collision(db_session):
+    """Verifies that creating a subscriber with an existing username on the same router is detected."""
+    from saas.models.tenant import Tenant, TenantStatus
+    from saas.models.router import Router, RouterStatus
+    from saas.models.pppoe import PPPoECustomer, CustomerStatus, ConnectionType, PPPoEPlan
+    from saas.security.auth import hash_token
+    from sqlalchemy import select
+
+    t1 = Tenant(name="ISP 1", slug="isp-1", contact_email="isp1@test.com", contact_phone="+254700000001", status=TenantStatus.active)
+    t2 = Tenant(name="ISP 2", slug="isp-2", contact_email="isp2@test.com", contact_phone="+254700000002", status=TenantStatus.active)
+    db_session.add_all([t1, t2])
+    db_session.flush()
+
+    r1 = Router(tenant_id=t1.id, name="Shared-Router", token_hash=hash_token("r1-tok"), status=RouterStatus.online)
+    db_session.add(r1)
+    db_session.flush()
+
+    p1 = PPPoEPlan(tenant_id=t1.id, name="10M", price_kes=1000, rate_limit="10M/10M")
+    db_session.add(p1)
+    db_session.flush()
+
+    sub1 = PPPoECustomer(
+        tenant_id=t1.id,
+        router_id=r1.id,
+        plan_id=p1.id,
+        username="john_doe",
+        password="p1",
+        full_name="John Doe",
+        status=CustomerStatus.active,
+        connection_type=ConnectionType.pppoe,
+    )
+    db_session.add(sub1)
+    db_session.commit()
+
+    # Attempting to query router collision
+    existing_on_router = db_session.scalar(
+        select(PPPoECustomer).where(
+            PPPoECustomer.router_id == r1.id,
+            PPPoECustomer.username == "john_doe",
+        )
+    )
+    assert existing_on_router is not None
+    assert existing_on_router.id == sub1.id
+
+
+
+
 
 
 

@@ -200,24 +200,53 @@ def build_hotspot_profile_command(
     )
 
 
-def build_pppoe_disable_command(username: str) -> str:
-    """Build a safe command to disable a PPPoE secret and kick active sessions immediately."""
+def build_pppoe_disable_command(username: str, subscriber_id: str | None = None) -> str:
+    """Build a safe command to disable a PPPoE secret and kick active sessions immediately, verifying ownership."""
     v_user = validate_pppoe_username(username)
     q_user = quote_routeros(v_user)
+    if subscriber_id:
+        q_marker = quote_routeros(f"COwen-PPPoE:{subscriber_id}")
+        return (
+            f":if ([:len [/ppp secret find where name={q_user} and comment={q_marker}]] > 0) do={{"
+            f"/ppp secret set [find where name={q_user} and comment={q_marker}] disabled=yes; "
+            f":do {{/ppp active remove [find where name={q_user}]}} on-error={{}}"
+            f"}} else={{"
+            f':error "COwen_Sync: Cannot disable PPPoE secret \'{v_user}\' - ownership mismatch"'
+            f"}}"
+        )
     return f"/ppp secret set [find where name={q_user}] disabled=yes; :do {{/ppp active remove [find where name={q_user}]}} on-error={{}}"
 
 
-def build_pppoe_enable_command(username: str) -> str:
-    """Build a safe command to enable a PPPoE secret."""
+def build_pppoe_enable_command(username: str, subscriber_id: str | None = None) -> str:
+    """Build a safe command to enable a PPPoE secret, verifying ownership."""
     v_user = validate_pppoe_username(username)
     q_user = quote_routeros(v_user)
+    if subscriber_id:
+        q_marker = quote_routeros(f"COwen-PPPoE:{subscriber_id}")
+        return (
+            f":if ([:len [/ppp secret find where name={q_user} and comment={q_marker}]] > 0) do={{"
+            f"/ppp secret set [find where name={q_user} and comment={q_marker}] disabled=no"
+            f"}} else={{"
+            f':error "COwen_Sync: Cannot enable PPPoE secret \'{v_user}\' - ownership mismatch"'
+            f"}}"
+        )
     return f"/ppp secret set [find where name={q_user}] disabled=no"
 
 
-def build_pppoe_delete_command(username: str) -> str:
-    """Build a safe command to remove a PPPoE secret and kick active sessions."""
+def build_pppoe_delete_command(username: str, subscriber_id: str | None = None) -> str:
+    """Build a safe command to remove a PPPoE secret and kick active sessions, verifying ownership."""
     v_user = validate_pppoe_username(username)
     q_user = quote_routeros(v_user)
+    if subscriber_id:
+        q_marker = quote_routeros(f"COwen-PPPoE:{subscriber_id}")
+        return (
+            f":if ([:len [/ppp secret find where name={q_user} and comment={q_marker}]] > 0) do={{"
+            f":do {{/ppp secret remove [find where name={q_user} and comment={q_marker}]}} on-error={{}}; "
+            f":do {{/ppp active remove [find where name={q_user}]}} on-error={{}}"
+            f"}} else={{"
+            f':error "COwen_Sync: Cannot delete PPPoE secret \'{v_user}\' - ownership mismatch"'
+            f"}}"
+        )
     return f":do {{/ppp secret remove [find where name={q_user}]}} on-error={{}}; :do {{/ppp active remove [find where name={q_user}]}} on-error={{}}"
 
 
@@ -227,24 +256,44 @@ def build_pppoe_secret_command(
     profile: str,
     service: str = "pppoe",
     comment: str | None = None,
+    subscriber_id: str | None = None,
 ) -> str:
-    """Build a safe, idempotent RouterOS command to create or update a PPPoE secret."""
+    """Build a safe, idempotent RouterOS command to create or update a PPPoE secret with immutable ownership marker.
+
+    Guarantees:
+    - Every COwen-managed PPPoE secret carries an immutable ownership marker (COwen-PPPoE:<subscriber_id>).
+    - Updates an existing secret only if its ownership marker matches.
+    - If an existing secret has no COwen marker or belongs to another subscriber, raises a conflict (:error).
+    - Never changes an unmanaged customer's password, profile, service or comment.
+    - Completely idempotent on retries.
+    """
     v_user = validate_pppoe_username(username)
     v_pass = validate_password(password)
     v_prof = validate_plan_name(profile)
-    v_comm = validate_comment(comment)
 
-    match = f"name={quote_routeros(v_user)}"
-    add_args = f"password={quote_routeros(v_pass)} profile={quote_routeros(v_prof)} service={quote_routeros(service)}"
-    set_args = f"password={quote_routeros(v_pass)} profile={quote_routeros(v_prof)}"
-    if v_comm:
-        add_args += f" comment={quote_routeros(v_comm)}"
-        set_args += f" comment={quote_routeros(v_comm)}"
+    if subscriber_id:
+        v_marker = f"COwen-PPPoE:{subscriber_id}"
+    elif comment and "COwen-PPPoE:" in comment:
+        v_marker = comment
+    else:
+        v_marker = f"COwen-PPPoE:{v_user}"
+
+    q_user = quote_routeros(v_user)
+    q_pass = quote_routeros(v_pass)
+    q_prof = quote_routeros(v_prof)
+    q_marker = quote_routeros(v_marker)
+    q_serv = quote_routeros(service)
 
     return (
-        f":if ([:len [/ppp secret find where {match}]] = 0) "
-        f"do={{/ppp secret add {match} {add_args}}} "
-        f"else={{/ppp secret set [find where {match}] {set_args}}}"
+        f":if ([:len [/ppp secret find where name={q_user}]] = 0) do={{"
+        f"/ppp secret add name={q_user} password={q_pass} profile={q_prof} service={q_serv} comment={q_marker}"
+        f"}} else={{"
+        f":if ([:len [/ppp secret find where name={q_user} and comment={q_marker}]] > 0) do={{"
+        f"/ppp secret set [find where name={q_user} and comment={q_marker}] password={q_pass} profile={q_prof}"
+        f"}} else={{"
+        f':error "COwen_Sync: Conflict - PPPoE secret \'{v_user}\' exists without matching COwen ownership marker"'
+        f"}}"
+        f"}}"
     )
 
 
@@ -253,24 +302,45 @@ def build_hotspot_user_command(
     password: str,
     profile: str,
     comment: str | None = None,
+    voucher_id: str | None = None,
 ) -> str:
-    """Build a safe, idempotent RouterOS command to create or update a Hotspot user."""
+    """Build a safe, idempotent RouterOS command to create or update a Hotspot user with immutable ownership marker.
+
+    Guarantees:
+    - Every COwen-managed voucher carries an immutable ownership marker (COwen-Voucher:<voucher_id>).
+    - Updates an existing voucher only if its ownership marker matches.
+    - Detects username collisions with unmanaged Hotspot users and raises a conflict (:error).
+    - Never overwrites unrelated Hotspot users.
+    - Completely idempotent on retries.
+    """
     v_code = validate_voucher_code(code)
     v_pass = validate_password(password)
     v_prof = validate_package_name(profile)
-    v_comm = validate_comment(comment)
 
-    match = f"name={quote_routeros(v_code)}"
-    add_args = f"password={quote_routeros(v_pass)} profile={quote_routeros(v_prof)}"
-    set_args = f"password={quote_routeros(v_pass)} profile={quote_routeros(v_prof)}"
-    if v_comm:
-        add_args += f" comment={quote_routeros(v_comm)}"
-        set_args += f" comment={quote_routeros(v_comm)}"
+    if voucher_id:
+        v_marker = f"COwen-Voucher:{voucher_id}"
+    elif comment and "COwen-Voucher:" in comment:
+        v_marker = comment
+    elif comment:
+        v_marker = f"COwen-Voucher:{v_code} | {validate_comment(comment)}"
+    else:
+        v_marker = f"COwen-Voucher:{v_code}"
+
+    q_code = quote_routeros(v_code)
+    q_pass = quote_routeros(v_pass)
+    q_prof = quote_routeros(v_prof)
+    q_marker = quote_routeros(v_marker)
 
     return (
-        f":if ([:len [/ip hotspot user find where {match}]] = 0) "
-        f"do={{/ip hotspot user add {match} {add_args}}} "
-        f"else={{/ip hotspot user set [find where {match}] {set_args}}}"
+        f":if ([:len [/ip hotspot user find where name={q_code}]] = 0) do={{"
+        f"/ip hotspot user add name={q_code} password={q_pass} profile={q_prof} comment={q_marker}"
+        f"}} else={{"
+        f":if ([:len [/ip hotspot user find where name={q_code} and comment={q_marker}]] > 0) do={{"
+        f"/ip hotspot user set [find where name={q_code} and comment={q_marker}] password={q_pass} profile={q_prof}"
+        f"}} else={{"
+        f':error "COwen_Sync: Conflict - Hotspot user \'{v_code}\' exists without matching COwen voucher marker"'
+        f"}}"
+        f"}}"
     )
 
 
@@ -303,7 +373,7 @@ def build_mikrotik_sync_script_source(
         ':local body \\"\\";',
         ':local status \\"\\";',
         f':do {{ :local res [/tool fetch url=\\"{clean_url}\\" http-method=post http-header-field=\\"{header_val}\\" http-data=\\$info check-certificate=yes-without-crl output=user as-value]; :set status (\\$res->\\"status\\"); :set body (\\$res->\\"data\\"); :log info \\"COwen_Sync: Check-in successful\\"; }} on-error={{ :log warning \\"COwen_Sync: HTTPS fetch failed - check network or TLS certificates\\" }};',
-        ':if (\\$status = \\"finished\\" and [:len \\$body] >= 16 and [:len \\$body] <= 32768 and [:pick \\$body 0 16] = \\"# COwen-Batch-OK\\") do={{ :do {{ :local run [:parse \\$body]; \\$run; }} on-error={{ :log warning \\"COwen_Sync: batch command execution error\\" }}; }};'
+        ':if (\\$status = \\"finished\\" and [:len \\$body] >= 16 and [:len \\$body] <= 32768 and [:pick \\$body 0 16] = \\"# COwen-Batch-OK\\") do={ :do { :local run [:parse \\$body]; \\$run; } on-error={ :log warning \\"COwen_Sync: batch command execution error\\" }; };'
     ]
     return " ".join(source_statements)
 
