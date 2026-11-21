@@ -250,7 +250,10 @@ def checkout_callback(
         verified_data = paystack.verify_transaction(ref)
         if verified_data.get("status") == "success":
             # Provision tenant!
-            result = process_payment_and_provision(db, verified_data)
+            proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+            host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+            request_base_url = f"{proto}://{host}"
+            result = process_payment_and_provision(db, verified_data, base_url=request_base_url)
             return templates.TemplateResponse(
                 request=request,
                 name="checkout_status.html",

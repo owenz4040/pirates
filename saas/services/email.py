@@ -26,7 +26,9 @@ def send_invitation_email(
     Decoupled from database provisioning: returns True if sent, False if Resend is unconfigured,
     and logs cleanly without exposing credentials or throwing unhandled errors.
     """
-    if not saas_settings.resend_api_key:
+    api_key = getattr(saas_settings, "effective_resend_api_key", None) or saas_settings.resend_api_key
+    from_address = getattr(saas_settings, "effective_resend_from_address", None) or saas_settings.resend_from_address
+    if not api_key:
         logger.warning(
             "RESEND_API_KEY is not configured. Simulating invitation delivery for %s: %s",
             to_email,
@@ -76,9 +78,9 @@ This single-use invitation link expires in 72 hours.
 
     try:
         import resend
-        resend.api_key = saas_settings.resend_api_key
+        resend.api_key = api_key
         payload = {
-            "from": saas_settings.resend_from_address,
+            "from": from_address,
             "to": [to_email],
             "subject": subject,
             "html": html_content,
@@ -101,7 +103,9 @@ def send_superadmin_otp_email(
     Sends the single-use 6-digit email verification code for Superadmin owner identity setup.
     Safeguard 3: In production, console fallback is strictly prohibited.
     """
-    if not saas_settings.resend_api_key:
+    api_key = getattr(saas_settings, "effective_resend_api_key", None) or saas_settings.resend_api_key
+    from_address = getattr(saas_settings, "effective_resend_from_address", None) or saas_settings.resend_from_address
+    if not api_key:
         if saas_settings.saas_env == "production":
             logger.error("Attempted Superadmin OTP email in production without RESEND_API_KEY.")
             raise EmailDeliveryError("RESEND_API_KEY must be configured in production environment.")
@@ -142,9 +146,9 @@ This code is valid for 15 minutes.
 
     try:
         import resend
-        resend.api_key = saas_settings.resend_api_key
+        resend.api_key = api_key
         payload = {
-            "from": saas_settings.resend_from_address,
+            "from": from_address,
             "to": [to_email],
             "subject": subject,
             "html": html_content,

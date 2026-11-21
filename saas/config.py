@@ -46,10 +46,29 @@ class SaasSettings(BaseSettings):
 
     @property
     def effective_database_url(self) -> str:
-        url = os.environ.get("SAAS_DATABASE_URL") or self.saas_database_url
+        url = os.environ.get("SAAS_DATABASE_URL")
+        if not url and os.environ.get("VERCEL"):
+            url = os.environ.get("DATABASE_URL")
+        if not url:
+            url = self.saas_database_url
         if url.startswith("sqlite:///./") and os.environ.get("VERCEL"):
             url = "sqlite:////tmp/saas.db"
         return url
+
+    @property
+    def effective_public_base_url(self) -> str:
+        url = os.environ.get("SAAS_PUBLIC_BASE_URL") or os.environ.get("PUBLIC_BASE_URL")
+        if not url and os.environ.get("VERCEL"):
+            return "https://cowen.vercel.app"
+        return url or self.saas_public_base_url
+
+    @property
+    def effective_resend_api_key(self) -> str:
+        return self.resend_api_key or os.environ.get("RESEND_API_KEY") or ""
+
+    @property
+    def effective_resend_from_address(self) -> str:
+        return os.environ.get("RESEND_FROM_ADDRESS") or self.resend_from_address
 
     @property
     def effective_paystack_secret_key(self) -> str:

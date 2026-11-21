@@ -34,6 +34,7 @@ def process_payment_and_provision(
     db: Session,
     paystack_data: dict[str, Any],
     raw_response_text: str | None = None,
+    base_url: str | None = None,
 ) -> dict[str, Any]:
     """
     Incorporates Safeguards 2, 3, 4, and 5:
@@ -194,7 +195,8 @@ def process_payment_and_provision(
     db.refresh(tenant)
 
     # Safeguard 5: Decoupled Email Delivery after successful DB commit
-    invitation_url = f"{saas_settings.saas_public_base_url.rstrip('/')}/invite/{raw_invite_token}"
+    effective_base = (base_url or getattr(saas_settings, "effective_public_base_url", saas_settings.saas_public_base_url)).rstrip("/")
+    invitation_url = f"{effective_base}/invite/{raw_invite_token}"
     email_delivered = False
     try:
         email_delivered = send_invitation_email(
