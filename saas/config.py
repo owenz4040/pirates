@@ -47,7 +47,7 @@ class SaasSettings(BaseSettings):
     @property
     def effective_database_url(self) -> str:
         # Exclusively reads SAAS_DATABASE_URL with NO fallback to DATABASE_URL
-        url = os.environ.get("SAAS_DATABASE_URL") or self.saas_database_url
+        url = (os.environ.get("SAAS_DATABASE_URL") or self.saas_database_url).strip()
         if url.startswith("sqlite:///./") and os.environ.get("VERCEL"):
             url = "sqlite:////tmp/saas.db"
         return url
