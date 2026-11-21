@@ -49,7 +49,7 @@ is_production = saas_settings.saas_env == "production"
 
 app.add_middleware(
     SessionMiddleware,
-    secret_key=saas_settings.saas_session_secret,
+    secret_key=saas_settings.effective_session_secret,
     session_cookie="saas_session",
     max_age=86400 * 7,  # 7 days
     https_only=is_production,

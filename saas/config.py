@@ -45,6 +45,19 @@ class SaasSettings(BaseSettings):
     superadmin_password: str = ""
 
     @property
+    def effective_session_secret(self) -> str:
+        return (
+            os.environ.get("SAAS_SESSION_SECRET")
+            or os.environ.get("SESSION_SECRET")
+            or os.environ.get("SESSION_SECRET_KEY")
+            or self.saas_session_secret
+        )
+
+    @property
+    def effective_encryption_master_key(self) -> str:
+        return os.environ.get("ENCRYPTION_MASTER_KEY") or self.encryption_master_key
+
+    @property
     def effective_database_url(self) -> str:
         # Exclusively reads SAAS_DATABASE_URL with NO fallback to DATABASE_URL
         url = (os.environ.get("SAAS_DATABASE_URL") or self.saas_database_url).strip()

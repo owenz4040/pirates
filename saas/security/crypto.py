@@ -23,7 +23,7 @@ def _build_single_fernet(k: str) -> Fernet:
 
 
 def _get_fernet(key: str | None = None) -> Fernet | MultiFernet:
-    raw = key or saas_settings.encryption_master_key
+    raw = key or saas_settings.effective_encryption_master_key
     if not raw:
         raise ValueError("Encryption master key is not configured.")
 
