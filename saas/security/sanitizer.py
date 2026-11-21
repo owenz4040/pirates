@@ -195,10 +195,20 @@ def build_pppoe_profile_command(
     )
 
 
+def format_routeros_duration(minutes: int) -> str:
+    """Convert minutes to RouterOS duration format (e.g. 60 -> 1h, 1440 -> 1d)."""
+    if minutes >= 1440 and minutes % 1440 == 0:
+        return f"{minutes // 1440}d"
+    if minutes >= 60 and minutes % 60 == 0:
+        return f"{minutes // 60}h"
+    return f"{minutes}m"
+
+
 def build_hotspot_profile_command(
     name: str,
     rate_limit: str,
     shared_users: int = 1,
+    session_timeout_minutes: int | None = None,
     comment: str = "COwen Managed Profile",
 ) -> str:
     """Build a safe, conflict-safe idempotent RouterOS command to create or update a Hotspot user profile.
@@ -213,12 +223,17 @@ def build_hotspot_profile_command(
     q_rate = quote_routeros(v_rate)
     q_comm = quote_routeros(v_comm)
 
+    timeout_param = ""
+    if session_timeout_minutes and session_timeout_minutes > 0:
+        d_str = format_routeros_duration(session_timeout_minutes)
+        timeout_param = f" session-timeout={quote_routeros(d_str)} status-autorefresh=1m keepalive-timeout=2m"
+
     return (
         f":if ([:len [/ip hotspot user profile find where name={q_name}]] = 0) do={{"
-        f"/ip hotspot user profile add name={q_name} rate-limit={q_rate} shared-users={shared_users} comment={q_comm}"
+        f"/ip hotspot user profile add name={q_name} rate-limit={q_rate} shared-users={shared_users}{timeout_param} comment={q_comm}"
         f"}} else={{"
         f":if ([:len [/ip hotspot user profile find where name={q_name} and comment={q_comm}]] > 0) do={{"
-        f"/ip hotspot user profile set [find where name={q_name} and comment={q_comm}] rate-limit={q_rate} shared-users={shared_users}"
+        f"/ip hotspot user profile set [find where name={q_name} and comment={q_comm}] rate-limit={q_rate} shared-users={shared_users}{timeout_param}"
         f"}}"
         f"}}"
     )
@@ -773,6 +788,8 @@ def build_hotspot_user_command(
     profile: str,
     comment: str | None = None,
     voucher_id: str | None = None,
+    limit_uptime_minutes: int | None = None,
+    limit_bytes_total: int | None = None,
 ) -> str:
     """Build a safe, idempotent RouterOS command to create or update a Hotspot user with immutable ownership marker.
 
@@ -782,6 +799,7 @@ def build_hotspot_user_command(
     - Detects username collisions with unmanaged Hotspot users and raises a conflict (:error).
     - Never overwrites unrelated Hotspot users.
     - Completely idempotent on retries.
+    - Applies limit-uptime and limit-bytes-total when configured.
     """
     v_code = validate_voucher_code(code)
     v_pass = validate_password(password)
@@ -801,17 +819,60 @@ def build_hotspot_user_command(
     q_prof = quote_routeros(v_prof)
     q_marker = quote_routeros(v_marker)
 
+    limits_str = ""
+    if limit_uptime_minutes and limit_uptime_minutes > 0:
+        d_uptime = format_routeros_duration(limit_uptime_minutes)
+        limits_str += f" limit-uptime={quote_routeros(d_uptime)}"
+    if limit_bytes_total and limit_bytes_total > 0:
+        limits_str += f" limit-bytes-total={int(limit_bytes_total)}"
+
     return (
         f":if ([:len [/ip hotspot user find where name={q_code}]] = 0) do={{"
-        f"/ip hotspot user add name={q_code} password={q_pass} profile={q_prof} comment={q_marker}"
+        f"/ip hotspot user add name={q_code} password={q_pass} profile={q_prof}{limits_str} comment={q_marker}"
         f"}} else={{"
         f":if ([:len [/ip hotspot user find where name={q_code} and comment={q_marker}]] > 0) do={{"
-        f"/ip hotspot user set [find where name={q_code} and comment={q_marker}] password={q_pass} profile={q_prof}"
+        f"/ip hotspot user set [find where name={q_code} and comment={q_marker}] password={q_pass} profile={q_prof}{limits_str}"
         f"}} else={{"
         f':error "COwen_Sync: Conflict - Hotspot user \'{v_code}\' exists without matching COwen voucher marker"'
         f"}}"
         f"}}"
     )
+
+
+def build_hotspot_walled_garden_command(
+    portal_host: str = "cowen.vercel.app",
+    extra_hosts: list[str] | None = None,
+) -> str:
+    """Generates RouterOS commands to whitelist captive portal, payment gateways, and OS probe domains."""
+    standard_hosts = [
+        portal_host,
+        "*.paystack.co",
+        "*.paystack.com",
+        "checkout.paystack.com",
+        "api.paystack.co",
+        "*.safaricom.co.ke",
+        "api.safaricom.co.ke",
+        "sandbox.safaricom.co.ke",
+        "connectivitycheck.gstatic.com",
+        "captive.apple.com",
+        "*.apple.com",
+        "*.msftconnecttest.com",
+    ]
+    if extra_hosts:
+        for h in extra_hosts:
+            if h not in standard_hosts:
+                standard_hosts.append(h)
+
+    lines = []
+    for host in standard_hosts:
+        clean_host = host.strip()
+        q_host = quote_routeros(clean_host)
+        lines.append(
+            f":if ([:len [/ip hotspot walled-garden find where dst-host={q_host}]] = 0) do={{"
+            f":do {{ /ip hotspot walled-garden add dst-host={q_host} comment=\"COwen Walled Garden\" }} on-error={{}}"
+            f"}}"
+        )
+    return ";\n".join(lines)
 
 
 def build_hotspot_bridge_command(
@@ -1153,4 +1214,134 @@ def build_mikrotik_terminal_commands(
         f"/system scheduler add name=\"COwen_Sync\" interval=60s on-event=\"COwen_Sync_Script\" start-time=startup\n"
         f"/system script run COwen_Sync_Script\n"
     )
+
+
+def generate_routeros_captive_portal_templates(
+    portal_base_url: str = "https://cowen.vercel.app/portal",
+    tenant_slug: str = "default",
+    brand_name: str = "COwen WiFi",
+) -> dict[str, str]:
+    """Generates RouterOS captive portal HTML files (login.html, alogin.html, status.html)."""
+    clean_slug = quote_routeros(tenant_slug).strip('"')
+    clean_brand = quote_routeros(brand_name).strip('"')
+
+    login_html = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{clean_brand} — Connect to WiFi</title>
+  <style>
+    body {{ background: #090A0F; color: #F5F2EB; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 40px 20px; }}
+    .card {{ max-width: 420px; margin: 0 auto; background: #121621; border: 1px solid rgba(223,183,88,0.25); border-radius: 14px; padding: 30px; }}
+    h2 {{ color: #DFB758; margin-bottom: 8px; font-size: 22px; }}
+    p {{ color: #949EB5; font-size: 14px; line-height: 1.5; }}
+    .btn {{ display: block; width: 100%; padding: 14px; margin-top: 20px; background: linear-gradient(135deg, #DFB758, #B8913E); color: #090A0F; font-weight: 700; text-decoration: none; border-radius: 8px; border: none; cursor: pointer; box-sizing: border-box; }}
+    .input {{ width: 100%; padding: 12px; margin-top: 10px; background: #090A0F; border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; color: #fff; box-sizing: border-box; }}
+    .error {{ color: #F87171; font-size: 13px; margin-top: 10px; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>{clean_brand}</h2>
+    <p>Redirecting to high-speed WiFi portal...</p>
+    <a id="portalLink" href="{portal_base_url}?tenant={clean_slug}&mac=$(mac)&ip=$(ip)&link_login_only=$(link-login-only-esc)&link_orig=$(link-orig-esc)" class="btn">
+      Open WiFi Portal & Packages &rarr;
+    </a>
+
+    $(if error)
+    <div class="error">$(error)</div>
+    $(endif)
+
+    <div style="margin-top: 30px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px; text-align: left;">
+      <div style="font-size: 12px; color: #949EB5; margin-bottom: 8px;">Already have an Access Voucher?</div>
+      <form name="login" action="$(link-login-only)" method="post">
+        <input type="hidden" name="dst" value="$(link-orig)">
+        <input type="text" name="username" class="input" placeholder="Enter Voucher Code" value="$(username)" required>
+        <input type="hidden" name="password" value="$(username)">
+        <button type="submit" class="btn" style="background: rgba(255,255,255,0.1); color: #fff;">Connect Voucher</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // Automatic seamless redirect to cloud captive portal
+    (function() {{
+      var url = "{portal_base_url}?tenant=" + encodeURIComponent("{clean_slug}") + 
+                "&mac=" + encodeURIComponent("$(mac)") + 
+                "&ip=" + encodeURIComponent("$(ip)") + 
+                "&link_login_only=" + encodeURIComponent("$(link-login-only)") + 
+                "&link_orig=" + encodeURIComponent("$(link-orig)") +
+                "&error=" + encodeURIComponent("$(error)");
+      // Only auto-redirect if no login error
+      var hasError = "$(error)".length > 0;
+      if (!hasError) {{
+        window.location.replace(url);
+      }}
+    }})();
+  </script>
+</body>
+</html>"""
+
+    alogin_html = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Connected — {clean_brand}</title>
+  <meta http-equiv="refresh" content="2; url=$(link-redirect)">
+  <style>
+    body {{ background: #090A0F; color: #F5F2EB; font-family: sans-serif; text-align: center; padding: 60px 20px; }}
+    .card {{ max-width: 400px; margin: 0 auto; background: #121621; border: 1px solid #DFB758; border-radius: 14px; padding: 30px; }}
+    h2 {{ color: #4ADE80; font-size: 24px; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>✓ Connected!</h2>
+    <p>You now have high-speed internet access.</p>
+    <p style="font-size: 13px; color: #949EB5;">Redirecting you to the internet...</p>
+    <a href="$(link-redirect)" style="color: #DFB758;">Click here if not redirected</a>
+  </div>
+</body>
+</html>"""
+
+    status_html = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Status — {clean_brand}</title>
+  <style>
+    body {{ background: #090A0F; color: #F5F2EB; font-family: sans-serif; text-align: center; padding: 40px 20px; }}
+    .card {{ max-width: 400px; margin: 0 auto; background: #121621; border: 1px solid rgba(223,183,88,0.25); border-radius: 14px; padding: 30px; }}
+    h3 {{ color: #DFB758; }}
+    .row {{ display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 14px; }}
+    .btn {{ display: block; width: 100%; padding: 12px; margin-top: 20px; background: #F87171; color: #fff; font-weight: 700; text-decoration: none; border-radius: 8px; border: none; cursor: pointer; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h3>{clean_brand} Active Session</h3>
+    <div class="row"><span>IP Address:</span><span>$(ip)</span></div>
+    <div class="row"><span>MAC Address:</span><span>$(mac)</span></div>
+    <div class="row"><span>Connected Time:</span><span>$(uptime)</span></div>
+    $(if session-time-left)
+    <div class="row"><span>Time Left:</span><span style="color: #DFB758; font-weight: bold;">$(session-time-left)</span></div>
+    $(endif)
+    $(if bytes-in-nice)
+    <div class="row"><span>Downloaded:</span><span>$(bytes-in-nice)</span></div>
+    $(endif)
+
+    <form action="$(link-logout)" name="logout" method="post">
+      <input type="hidden" name="erase-cookie" value="on">
+      <button type="submit" class="btn">Log Out</button>
+    </form>
+  </div>
+</body>
+</html>"""
+
+    return {
+        "login.html": login_html,
+        "alogin.html": alogin_html,
+        "status.html": status_html,
+    }
 

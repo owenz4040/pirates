@@ -47,8 +47,8 @@ async def verify_csrf_token(request: Request) -> None:
             detail="Missing required X-Router-Token header on router API.",
         )
 
-    # 3. Paystack webhook: MUST supply HMAC signature header
-    if request.url.path == "/api/webhook/paystack":
+    # 3. Paystack webhooks (platform and tenant): MUST supply HMAC signature header
+    if request.url.path.startswith("/api/webhook/paystack"):
         if request.headers.get("x-paystack-signature"):
             return
         raise HTTPException(
@@ -56,11 +56,15 @@ async def verify_csrf_token(request: Request) -> None:
             detail="Missing required x-paystack-signature header.",
         )
 
-    # 4. Public checkout onboarding endpoint (/checkout/initiate) is a public entry form
-    if request.url.path == "/checkout/initiate":
+    # 4. Safaricom M-Pesa Daraja webhooks: machine-to-machine callback
+    if request.url.path.startswith("/api/webhook/mpesa/"):
         return
 
-    # 5. All cookie/session-authenticated requests MUST supply a valid CSRF token
+    # 5. Public customer portal purchase and checkout endpoints
+    if request.url.path in ("/checkout/initiate", "/api/portal/purchase"):
+        return
+
+    # 6. All cookie/session-authenticated requests MUST supply a valid CSRF token
     session_token = request.session.get("csrf_token") if "session" in request.scope else None
     if not session_token:
         raise HTTPException(

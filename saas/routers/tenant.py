@@ -70,6 +70,7 @@ from saas.security.sanitizer import (
     build_complete_hotspot_provisioning_script,
     build_hotspot_profile_command,
     build_hotspot_user_command,
+    build_hotspot_walled_garden_command,
     build_mikrotik_rsc_file,
     build_mikrotik_sync_script_source,
     build_mikrotik_terminal_commands,
@@ -78,6 +79,7 @@ from saas.security.sanitizer import (
     build_pppoe_enable_command,
     build_pppoe_profile_command,
     build_pppoe_secret_command,
+    generate_routeros_captive_portal_templates,
     quote_routeros,
     validate_interface_name,
     validate_package_name,
@@ -1158,6 +1160,24 @@ def tenant_hotspot_page(
         .order_by(HotspotNetwork.created_at.desc())
     ).all()
 
+    customer_payments = db.scalars(
+        select(CustomerPayment)
+        .where(CustomerPayment.tenant_id == tenant_id)
+        .order_by(CustomerPayment.created_at.desc())
+        .limit(100)
+    ).all()
+
+    total_sales_kes = sum((p.amount_kes for p in customer_payments if p.status == "completed"), Decimal("0.00"))
+    successful_count = sum(1 for p in customer_payments if p.status == "completed")
+    failed_count = sum(1 for p in customer_payments if p.status == "failed")
+    mpesa_revenue_kes = sum((p.amount_kes for p in customer_payments if p.status == "completed" and p.gateway == "mpesa"), Decimal("0.00"))
+    paystack_revenue_kes = sum((p.amount_kes for p in customer_payments if p.status == "completed" and p.gateway == "paystack"), Decimal("0.00"))
+
+    active_vouchers_count = sum(1 for v in vouchers if v.status == VoucherStatus.active)
+    expired_vouchers_count = sum(1 for v in vouchers if v.status == VoucherStatus.expired or (v.expires_at and v.expires_at < datetime.now(timezone.utc)))
+    used_vouchers_count = sum(1 for v in vouchers if v.status == VoucherStatus.used)
+    unused_vouchers_count = sum(1 for v in vouchers if v.status == VoucherStatus.unused)
+
     return templates.TemplateResponse(
         request=request,
         name="tenant/hotspot.html",
@@ -1169,6 +1189,16 @@ def tenant_hotspot_page(
             "routers": routers,
             "portal": portal,
             "networks": networks,
+            "customer_payments": customer_payments,
+            "total_sales_kes": total_sales_kes,
+            "successful_count": successful_count,
+            "failed_count": failed_count,
+            "mpesa_revenue_kes": mpesa_revenue_kes,
+            "paystack_revenue_kes": paystack_revenue_kes,
+            "active_vouchers_count": active_vouchers_count,
+            "expired_vouchers_count": expired_vouchers_count,
+            "used_vouchers_count": used_vouchers_count,
+            "unused_vouchers_count": unused_vouchers_count,
             "batch_filter": batch_filter,
             "msg": msg,
             "error": error,
@@ -1228,6 +1258,77 @@ def tenant_hotspot_package_add(
     db.commit()
     set_flash(request, msg=f"Package '{clean_name}' created successfully.")
     return RedirectResponse(url="/tenant/hotspot", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@tenant_router.post("/tenant/hotspot/packages/{package_id}/toggle", dependencies=[Depends(verify_csrf_token)])
+def tenant_hotspot_package_toggle(
+    request: Request,
+    package_id: str,
+    context: TenantContext = Depends(require_tenant_context),
+    db: Session = Depends(get_saas_db),
+):
+    """Toggles active/inactive state of a hotspot package."""
+    pkg = db.scalar(
+        select(HotspotPackage).where(
+            HotspotPackage.id == package_id,
+            HotspotPackage.tenant_id == context.tenant.id,
+        )
+    )
+    if pkg:
+        pkg.is_active = not pkg.is_active
+        db.commit()
+        state = "activated" if pkg.is_active else "deactivated"
+        set_flash(request, msg=f"Package '{pkg.name}' {state}.")
+    return RedirectResponse(url="/tenant/hotspot", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@tenant_router.post("/tenant/hotspot/packages/{package_id}/delete", dependencies=[Depends(verify_csrf_token)])
+def tenant_hotspot_package_delete(
+    request: Request,
+    package_id: str,
+    context: TenantContext = Depends(require_tenant_context),
+    db: Session = Depends(get_saas_db),
+):
+    """Deletes a hotspot pricing package."""
+    pkg = db.scalar(
+        select(HotspotPackage).where(
+            HotspotPackage.id == package_id,
+            HotspotPackage.tenant_id == context.tenant.id,
+        )
+    )
+    if pkg:
+        db.delete(pkg)
+        db.commit()
+        set_flash(request, msg=f"Package '{pkg.name}' deleted.")
+    return RedirectResponse(url="/tenant/hotspot", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@tenant_router.get("/tenant/hotspot/walled-garden/rsc")
+def tenant_hotspot_walled_garden_rsc(
+    context: TenantContext = Depends(require_tenant_context),
+):
+    """Generates downloadable RouterOS walled garden rules."""
+    from fastapi.responses import Response
+    script = build_hotspot_walled_garden_command()
+    headers = {"Content-Disposition": 'attachment; filename="cowen_walled_garden.rsc"'}
+    return Response(content=script, media_type="text/plain", headers=headers)
+
+
+@tenant_router.get("/tenant/hotspot/templates/{filename}")
+def tenant_hotspot_template_download(
+    filename: str,
+    context: TenantContext = Depends(require_tenant_context),
+):
+    """Downloads RouterOS captive portal HTML files (login.html, alogin.html, status.html)."""
+    from fastapi.responses import Response
+    templates_dict = generate_routeros_captive_portal_templates(
+        tenant_slug=context.tenant.slug,
+        brand_name=context.tenant.name,
+    )
+    if filename not in templates_dict:
+        raise HTTPException(status_code=404, detail="Template file not found.")
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return Response(content=templates_dict[filename], media_type="text/html", headers=headers)
 
 
 @tenant_router.post("/tenant/hotspot/vouchers/generate", dependencies=[Depends(verify_csrf_token)])

@@ -50,8 +50,10 @@ class HotspotVoucher(SaasBase, TenantScopedModel):
         String(36), ForeignKey("saas_routers.id", ondelete="SET NULL"), nullable=True, index=True
     )
     code: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
+    password: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[VoucherStatus] = mapped_column(Enum(VoucherStatus), default=VoucherStatus.unused, index=True)
     batch_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    customer_payment_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     
     first_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

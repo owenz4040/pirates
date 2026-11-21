@@ -16,6 +16,7 @@ from saas.models.tenant import SubscriptionTier
 from saas.security.crypto import decrypt_secret, encrypt_secret
 
 if TYPE_CHECKING:
+    from saas.models.hotspot import HotspotPackage, HotspotVoucher
     from saas.models.tenant import Tenant
 
 
@@ -137,9 +138,23 @@ class CustomerPayment(SaasBase, TenantScopedModel):
     voucher_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("saas_hotspot_vouchers.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    package_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("saas_hotspot_packages.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    router_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("saas_routers.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     gateway: Mapped[str] = mapped_column(String(32), default="mpesa")  # "mpesa", "paystack", "cash"
-    reference: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    reference: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    provider_reference: Mapped[str | None] = mapped_column(String(128), nullable=True)  # M-Pesa Receipt or Paystack Ref
     amount_kes: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     phone_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="pending", index=True)  # pending, completed, failed
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    client_mac: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    client_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    link_login_only: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    package: Mapped["HotspotPackage | None"] = relationship()
+    voucher: Mapped["HotspotVoucher | None"] = relationship()

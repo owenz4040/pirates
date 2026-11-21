@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
+  <title>Connected — {{ brand_name }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090A0F;
+      --card-bg: rgba(18, 22, 33, 0.9);
+      --border: rgba(255, 255, 255, 0.08);
+      --border-gold: rgba(223, 183, 88, 0.35);
+      --gold: #DFB758;
+      --text: #F5F2EB;
+      --text-muted: #949EB5;
+      --green: #4ADE80;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      background-image: radial-gradient(circle at 50% 30%, rgba(74, 222, 128, 0.1), transparent 50%);
+      font-family: 'Outfit', sans-serif;
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+    }
+    .card {
+      width: 100%;
+      max-width: 440px;
+      background: var(--card-bg);
+      border: 1px solid var(--border-gold);
+      border-radius: 16px;
+      padding: 36px 24px;
+      text-align: center;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+    }
+    .check-icon {
+      width: 64px;
+      height: 64px;
+      background: rgba(74, 222, 128, 0.15);
+      border: 2px solid var(--green);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+      color: var(--green);
+      margin: 0 auto 20px;
+    }
+    h1 {
+      font-size: 24px;
+      font-weight: 800;
+      color: #fff;
+      margin-bottom: 8px;
+    }
+    p {
+      color: var(--text-muted);
+      font-size: 14px;
+      line-height: 1.5;
+      margin-bottom: 24px;
+    }
+    .voucher-box {
+      background: rgba(9, 10, 15, 0.8);
+      border: 1px dashed var(--border-gold);
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 24px;
+    }
+    .voucher-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 4px;
+    }
+    .voucher-code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--gold);
+      letter-spacing: 0.1em;
+    }
+    .details-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .btn-browse {
+      display: block;
+      width: 100%;
+      padding: 14px;
+      background: linear-gradient(135deg, var(--gold), #B8913E);
+      color: #090A0F;
+      font-size: 15px;
+      font-weight: 800;
+      text-decoration: none;
+      border-radius: 8px;
+      margin-top: 24px;
+      cursor: pointer;
+    }
+    .btn-relogin {
+      display: inline-block;
+      margin-top: 14px;
+      font-size: 13px;
+      color: var(--gold);
+      text-decoration: underline;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <div class="check-icon">✓</div>
+  <h1>You're Connected!</h1>
+  <p>Your high-speed internet pass is active on {{ brand_name }}.</p>
+
+  {% if voucher %}
+  <div class="voucher-box">
+    <div class="voucher-label">Your Active Voucher Code</div>
+    <div class="voucher-code">{{ voucher.code }}</div>
+    <small style="color: var(--text-muted); font-size: 11px;">Keep this code in case you disconnect and need to reconnect.</small>
+  </div>
+  {% endif %}
+
+  <div style="text-align: left; margin-bottom: 20px;">
+    {% if package %}
+    <div class="details-row">
+      <span style="color: var(--text-muted);">Package</span>
+      <span style="color: #fff; font-weight: 600;">{{ package.name }}</span>
+    </div>
+    <div class="details-row">
+      <span style="color: var(--text-muted);">Speed Allocation</span>
+      <span style="color: var(--gold); font-weight: 600;">{{ package.rate_limit }}</span>
+    </div>
+    <div class="details-row">
+      <span style="color: var(--text-muted);">Duration</span>
+      <span style="color: #fff; font-weight: 600;">
+        {% if package.duration_minutes >= 1440 %}
+        {{ (package.duration_minutes / 1440) | int }} Day(s)
+        {% elif package.duration_minutes >= 60 %}
+        {{ (package.duration_minutes / 60) | int }} Hour(s)
+        {% else %}
+        {{ package.duration_minutes }} Minutes
+        {% endif %}
+      </span>
+    </div>
+    {% endif %}
+    {% if payment %}
+    <div class="details-row">
+      <span style="color: var(--text-muted);">Payment Reference</span>
+      <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #fff;">{{ payment.reference }}</span>
+    </div>
+    {% endif %}
+  </div>
+
+  <a href="https://google.com" class="btn-browse" target="_blank">Start Browsing the Web &rarr;</a>
+
+  <!-- In case the user's captive portal browser needs a re-post to the router -->
+  {% if voucher and link_login_only %}
+  <form id="reconnectForm" method="post" action="{{ link_login_only }}" style="display: none;">
+    <input type="hidden" name="username" value="{{ voucher.code }}">
+    <input type="hidden" name="password" value="{{ voucher.password or voucher.code }}">
+    <input type="hidden" name="dst" value="https://google.com">
+  </form>
+  <div>
+    <span class="btn-relogin" onclick="document.getElementById('reconnectForm').submit()">Click here to re-authenticate with router</span>
+  </div>
+  {% endif %}
+</div>
+
+</body>
+</html>

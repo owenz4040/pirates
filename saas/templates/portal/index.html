@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
+  <title>{{ brand_name }} — High-Speed WiFi Portal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090A0F;
+      --card-bg: rgba(18, 22, 33, 0.85);
+      --border: rgba(255, 255, 255, 0.08);
+      --border-gold: rgba(223, 183, 88, 0.35);
+      --gold: #DFB758;
+      --gold-dark: #B8913E;
+      --text: #F5F2EB;
+      --text-muted: #949EB5;
+      --green: #4ADE80;
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    body {
+      background: var(--bg);
+      background-image: 
+        radial-gradient(circle at 15% 15%, rgba(223, 183, 88, 0.08), transparent 40%),
+        radial-gradient(circle at 85% 85%, rgba(91, 157, 255, 0.06), transparent 40%);
+      background-attachment: fixed;
+      font-family: 'Outfit', sans-serif;
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px 16px;
+    }
+    .portal-container {
+      width: 100%;
+      max-width: 480px;
+      margin: 0 auto;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    .brand-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      background: rgba(223, 183, 88, 0.1);
+      border: 1px solid var(--border-gold);
+      border-radius: 999px;
+      color: var(--gold);
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+    .brand-title {
+      font-size: 26px;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: -0.02em;
+    }
+    .brand-desc {
+      color: var(--text-muted);
+      font-size: 14px;
+      margin-top: 4px;
+    }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      background: rgba(255, 255, 255, 0.04);
+      padding: 4px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      margin-bottom: 20px;
+    }
+    .tab-btn {
+      flex: 1;
+      padding: 10px;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .tab-btn.active {
+      background: rgba(223, 183, 88, 0.15);
+      color: var(--gold);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+
+    /* Package Cards */
+    .package-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .pkg-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      backdrop-filter: blur(10px);
+    }
+    .pkg-card:hover, .pkg-card:active {
+      border-color: var(--border-gold);
+      background: rgba(26, 32, 48, 0.95);
+      transform: translateY(-1px);
+    }
+    .pkg-info h3 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 4px;
+    }
+    .pkg-badges {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .badge {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: rgba(255,255,255,0.06);
+      color: var(--text-muted);
+    }
+    .badge-speed {
+      background: rgba(223, 183, 88, 0.1);
+      color: var(--gold);
+    }
+    .pkg-price {
+      text-align: right;
+    }
+    .price-val {
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--gold);
+    }
+    .btn-buy {
+      padding: 6px 14px;
+      background: linear-gradient(135deg, var(--gold), var(--gold-dark));
+      color: #090A0F;
+      font-size: 12px;
+      font-weight: 700;
+      border-radius: 6px;
+      border: none;
+      margin-top: 6px;
+      cursor: pointer;
+    }
+
+    /* Modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      backdrop-filter: blur(6px);
+    }
+    .modal-box {
+      width: 100%;
+      max-width: 420px;
+      background: #121621;
+      border: 1px solid var(--border-gold);
+      border-radius: var(--radius);
+      padding: 24px;
+      animation: modalSlide 0.25s ease;
+    }
+    @keyframes modalSlide {
+      from { transform: translateY(20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .form-group {
+      margin-bottom: 16px;
+    }
+    .form-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .form-input {
+      width: 100%;
+      padding: 12px 14px;
+      background: #090A0F;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: #fff;
+      font-size: 15px;
+      font-family: inherit;
+    }
+    .form-input:focus {
+      outline: none;
+      border-color: var(--gold);
+    }
+    .gw-toggle {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .gw-btn {
+      padding: 10px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.03);
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      text-align: center;
+    }
+    .gw-btn.active {
+      border-color: var(--gold);
+      background: rgba(223,183,88,0.1);
+      color: #fff;
+    }
+    .btn-pay {
+      width: 100%;
+      padding: 14px;
+      background: linear-gradient(135deg, var(--gold), var(--gold-dark));
+      color: #090A0F;
+      font-size: 15px;
+      font-weight: 800;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(223, 183, 88, 0.25);
+    }
+
+    /* Waiting screen */
+    .waiting-box {
+      display: none;
+      text-align: center;
+      padding: 20px 0;
+    }
+    .spinner {
+      width: 44px;
+      height: 44px;
+      border: 3px solid rgba(223, 183, 88, 0.2);
+      border-top-color: var(--gold);
+      border-radius: 50%;
+      animation: spin 1s infinite linear;
+      margin: 0 auto 16px;
+    }
+    @keyframes spin {
+      100% { transform: rotate(360deg); }
+    }
+
+    /* Error alert */
+    .error-alert {
+      background: rgba(248, 113, 113, 0.1);
+      border: 1px solid rgba(248, 113, 113, 0.3);
+      color: #F87171;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      margin-bottom: 16px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<div class="portal-container">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="brand-badge">
+      <span style="color: var(--green);">●</span> {{ ssid_name }}
+    </div>
+    <h1 class="brand-title">{{ brand_name }}</h1>
+    <p class="brand-desc">{{ design.headline if (design and design.headline) else 'Select an internet package to get online instantly' }}</p>
+  </div>
+
+  {% if error_msg %}
+  <div class="error-alert">{{ error_msg }}</div>
+  {% endif %}
+
+  <!-- Tabs: Buy Packages vs Voucher Login -->
+  <div class="tabs">
+    <button type="button" class="tab-btn active" id="tabBuy" onclick="switchTab('buy')">Buy Access Pass</button>
+    <button type="button" class="tab-btn" id="tabCode" onclick="switchTab('code')">Enter Voucher Code</button>
+  </div>
+
+  <!-- Tab 1: Available Packages -->
+  <div id="viewBuy">
+    <div class="package-grid">
+      {% for pkg in packages %}
+      <div class="pkg-card" onclick="selectPackage('{{ pkg.id }}', '{{ pkg.name }}', '{{ pkg.price_kes }}', '{{ pkg.rate_limit }}')">
+        <div class="pkg-info">
+          <h3>{{ pkg.name }}</h3>
+          <div class="pkg-badges">
+            <span class="badge">
+              {% if pkg.duration_minutes >= 1440 %}
+              {{ (pkg.duration_minutes / 1440) | int }} Day(s)
+              {% elif pkg.duration_minutes >= 60 %}
+              {{ (pkg.duration_minutes / 60) | int }} Hour(s)
+              {% else %}
+              {{ pkg.duration_minutes }} Min
+              {% endif %}
+            </span>
+            <span class="badge badge-speed">{{ pkg.rate_limit }}</span>
+          </div>
+        </div>
+        <div class="pkg-price">
+          <div class="price-val">KSh {{ "{:,.0f}".format(pkg.price_kes) }}</div>
+          <button type="button" class="btn-buy">Select &rarr;</button>
+        </div>
+      </div>
+      {% endfor %}
+
+      {% if not packages %}
+      <div style="text-align: center; padding: 40px; color: var(--text-muted); background: var(--card-bg); border-radius: var(--radius);">
+        No internet packages currently active. Please contact the network administrator.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Tab 2: Manual Voucher Login Form (posts directly to MikroTik link-login-only) -->
+  <div id="viewCode" style="display: none;">
+    <div style="background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px;">
+      <h3 style="font-size: 16px; margin-bottom: 6px; color: #fff;">Redeem Access Voucher</h3>
+      <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 18px;">
+        Enter your printed voucher card code or SMS pass below:
+      </p>
+
+      <form action="{{ link_login_only }}" method="post">
+        <input type="hidden" name="dst" value="{{ link_orig }}">
+        <div class="form-group">
+          <label class="form-label">Voucher / Access Code</label>
+          <input type="text" name="username" class="form-input" style="font-family: 'JetBrains Mono', monospace; font-size: 18px; text-transform: uppercase; letter-spacing: 0.1em; text-align: center;" placeholder="e.g. VOUCH123" required autofocus>
+          <input type="hidden" name="password" id="manual_pass">
+        </div>
+        <button type="submit" class="btn-pay" onclick="document.getElementById('manual_pass').value = this.form.username.value">
+          Connect to Internet &rarr;
+        </button>
+      </form>
+    </div>
+  </div>
+
+</div>
+
+<!-- Payment Checkout Modal -->
+<div id="paymentModal" class="modal-overlay">
+  <div class="modal-box">
+    
+    <div id="modalFormView">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px;">
+        <div>
+          <h3 id="modalPkgName" style="color: #fff; font-size: 18px;">Package Access</h3>
+          <div id="modalPkgPrice" style="color: var(--gold); font-size: 15px; font-weight: 700;">KSh 0.00</div>
+        </div>
+        <button type="button" onclick="closeModal()" style="background: none; border: none; color: var(--text-muted); font-size: 22px; cursor: pointer;">✕</button>
+      </div>
+
+      <!-- Payment Method Selection -->
+      <div class="form-label">Payment Method</div>
+      <div class="gw-toggle">
+        <button type="button" class="gw-btn {% if has_mpesa %}active{% endif %}" id="btnMpesa" onclick="selectGateway('mpesa')">
+          🟢 M-Pesa STK
+        </button>
+        <button type="button" class="gw-btn {% if not has_mpesa and has_paystack %}active{% endif %}" id="btnPaystack" onclick="selectGateway('paystack')">
+          💳 Card / Paystack
+        </button>
+      </div>
+
+      <!-- M-Pesa Inputs -->
+      <div id="mpesaFields" style="display: {% if has_mpesa %}block{% else %}none{% endif %};">
+        <div class="form-group">
+          <label class="form-label">Safaricom M-Pesa Phone Number *</label>
+          <input type="tel" id="inputPhone" class="form-input" placeholder="07XXXXXXXX or 01XXXXXXXX" maxlength="13">
+          <small style="color: var(--text-muted); font-size: 11px; margin-top: 4px; display: block;">
+            An STK prompt will appear on your phone to enter your M-Pesa PIN.
+          </small>
+        </div>
+      </div>
+
+      <!-- Paystack Inputs -->
+      <div id="paystackFields" style="display: {% if not has_mpesa and has_paystack %}block{% else %}none{% endif %};">
+        <div class="form-group">
+          <label class="form-label">Email Address (for receipt)</label>
+          <input type="email" id="inputEmail" class="form-input" placeholder="you@email.com">
+        </div>
+      </div>
+
+      <div id="modalError" class="error-alert" style="display: none; margin-top: 10px;"></div>
+
+      <button type="button" id="btnSubmitPayment" class="btn-pay" onclick="submitPurchase()">
+        Pay & Connect Now
+      </button>
+    </div>
+
+    <!-- Waiting for STK / Confirmation View -->
+    <div id="modalWaitingView" class="waiting-box">
+      <div class="spinner"></div>
+      <h3 style="color: #fff; font-size: 18px; margin-bottom: 8px;">Waiting for M-Pesa Payment</h3>
+      <p style="color: var(--text-muted); font-size: 13px; line-height: 1.5; margin-bottom: 16px;">
+        Please check your phone and enter your M-Pesa PIN to complete payment.
+      </p>
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--gold); padding: 8px; background: rgba(223,183,88,0.1); border-radius: 6px;" id="waitingRefDisplay">
+        Ref: HPAY-...
+      </div>
+      <div style="font-size: 11px; color: var(--text-muted); margin-top: 14px;">
+        Checking confirmation automatically every 2 seconds...
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Hidden Auto-Login Form for MikroTik Automatic Authentication -->
+<form id="autoLoginForm" method="post" action="{{ link_login_only }}" style="display: none;">
+  <input type="hidden" name="username" id="auto_user">
+  <input type="hidden" name="password" id="auto_pass">
+  <input type="hidden" name="dst" value="{{ link_orig }}">
+</form>
+
+<script>
+  var currentTenantSlug = "{{ tenant.slug }}";
+  var currentRouterId = "{{ router_id }}";
+  var currentMac = "{{ client_mac }}";
+  var currentIp = "{{ client_ip }}";
+  var currentLinkLogin = "{{ link_login_only }}";
+  var selectedPkgId = null;
+  var selectedGateway = "{{ 'mpesa' if has_mpesa else 'paystack' }}";
+  var pollInterval = null;
+
+  function switchTab(tab) {
+    document.getElementById('viewBuy').style.display = (tab === 'buy') ? 'block' : 'none';
+    document.getElementById('viewCode').style.display = (tab === 'code') ? 'block' : 'none';
+    document.getElementById('tabBuy').classList.toggle('active', tab === 'buy');
+    document.getElementById('tabCode').classList.toggle('active', tab === 'code');
+  }
+
+  function selectPackage(id, name, price, speed) {
+    selectedPkgId = id;
+    document.getElementById('modalPkgName').textContent = name + ' (' + speed + ')';
+    document.getElementById('modalPkgPrice').textContent = 'KSh ' + parseFloat(price).toLocaleString('en-US');
+    document.getElementById('modalError').style.display = 'none';
+    document.getElementById('modalFormView').style.display = 'block';
+    document.getElementById('modalWaitingView').style.display = 'none';
+    document.getElementById('paymentModal').style.display = 'flex';
+  }
+
+  function closeModal() {
+    if (pollInterval) clearInterval(pollInterval);
+    document.getElementById('paymentModal').style.display = 'none';
+  }
+
+  function selectGateway(gw) {
+    selectedGateway = gw;
+    document.getElementById('btnMpesa').classList.toggle('active', gw === 'mpesa');
+    document.getElementById('btnPaystack').classList.toggle('active', gw === 'paystack');
+    document.getElementById('mpesaFields').style.display = (gw === 'mpesa') ? 'block' : 'none';
+    document.getElementById('paystackFields').style.display = (gw === 'paystack') ? 'block' : 'none';
+  }
+
+  function submitPurchase() {
+    var phone = document.getElementById('inputPhone').value.trim();
+    var email = document.getElementById('inputEmail').value.trim();
+    var errEl = document.getElementById('modalError');
+    errEl.style.display = 'none';
+
+    if (selectedGateway === 'mpesa' && !phone) {
+      errEl.textContent = 'Please enter your Safaricom phone number.';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    var submitBtn = document.getElementById('btnSubmitPayment');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Contacting Gateway...';
+
+    var payload = {
+      tenant_slug: currentTenantSlug,
+      package_id: selectedPkgId,
+      gateway: selectedGateway,
+      customer_phone: phone,
+      customer_email: email,
+      router_id: currentRouterId,
+      client_mac: currentMac,
+      client_ip: currentIp,
+      link_login_only: currentLinkLogin
+    };
+
+    fetch('/api/portal/purchase', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Pay & Connect Now';
+
+      if (data.status === 'error') {
+        errEl.textContent = data.message || 'Payment initiation failed.';
+        errEl.style.display = 'block';
+        return;
+      }
+
+      if (data.status === 'checkout_url' && data.authorization_url) {
+        window.location.href = data.authorization_url;
+        return;
+      }
+
+      if (data.status === 'stk_sent') {
+        // Switch to waiting state
+        document.getElementById('modalFormView').style.display = 'none';
+        document.getElementById('modalWaitingView').style.display = 'block';
+        document.getElementById('waitingRefDisplay').textContent = 'Ref: ' + data.reference;
+
+        startPolling(data.reference);
+      }
+    })
+    .catch(function(err) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Pay & Connect Now';
+      errEl.textContent = 'Network error connecting to payment gateway.';
+      errEl.style.display = 'block';
+    });
+  }
+
+  function startPolling(reference) {
+    var attempts = 0;
+    if (pollInterval) clearInterval(pollInterval);
+
+    pollInterval = setInterval(function() {
+      attempts++;
+      if (attempts > 60) { // 2 minutes max
+        clearInterval(pollInterval);
+        alert('Payment confirmation timed out. If you completed M-Pesa payment, click "Enter Voucher Code" and use your reference.');
+        closeModal();
+        return;
+      }
+
+      fetch('/api/portal/payment-status?reference=' + encodeURIComponent(reference))
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          if (data.status === 'completed' && data.voucher_code) {
+            clearInterval(pollInterval);
+            // Automatic Login Execution: submit to MikroTik Hotspot
+            performAutoLogin(data.voucher_code, data.voucher_password || data.voucher_code, data.link_login_only);
+          } else if (data.status === 'failed') {
+            clearInterval(pollInterval);
+            alert('M-Pesa payment was cancelled or failed.');
+            closeModal();
+          }
+        })
+        .catch(function(err) {
+          console.warn('Polling error:', err);
+        });
+    }, 2000);
+  }
+
+  function performAutoLogin(code, pass, linkUrl) {
+    // 1. Fill auto-login form
+    document.getElementById('auto_user').value = code;
+    document.getElementById('auto_pass').value = pass;
+    if (linkUrl) {
+      document.getElementById('autoLoginForm').action = linkUrl;
+    }
+
+    // 2. Submit form immediately to MikroTik Hotspot link-login-only
+    document.getElementById('autoLoginForm').submit();
+
+    // 3. Fallback redirect to connected page after short delay if form post does not navigate
+    setTimeout(function() {
+      window.location.href = '/portal/connected?reference=' + encodeURIComponent(code);
+    }, 1500);
+  }
+</script>
+
+</body>
+</html>
