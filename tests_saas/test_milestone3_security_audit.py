@@ -730,4 +730,51 @@ def test_failed_download_recovery_and_flash_storage_safety():
     assert "/system script run COwen_Sync_Script" in rsc
 
 
+def test_router_command_pipeline_and_subscriber_lifecycle():
+    """Verifies that website actions generate valid, injection-proof RouterOS commands with profile upsert."""
+    from saas.security.sanitizer import (
+        build_pppoe_profile_command,
+        build_pppoe_disable_command,
+        build_pppoe_enable_command,
+        build_pppoe_delete_command,
+    )
+    from saas.routers.tenant import render_router_batch
+    from saas.models.router import RouterCommand, RouterCommandStatus
+
+    # 1. Profile upsert command
+    prof_cmd = build_pppoe_profile_command("10M-Residential", "10M/10M")
+    assert '/ppp profile add name="10M-Residential" rate-limit="10M/10M"' in prof_cmd
+    assert '/ppp profile set [find where name="10M-Residential"] rate-limit="10M/10M"' in prof_cmd
+
+    # 2. Suspend command kicks active session
+    disable_cmd = build_pppoe_disable_command("user_test")
+    assert '/ppp secret set [find where name="user_test"] disabled=yes' in disable_cmd
+    assert '/ppp active remove [find where name="user_test"]' in disable_cmd
+
+    # 3. Activate command
+    enable_cmd = build_pppoe_enable_command("user_test")
+    assert '/ppp secret set [find where name="user_test"] disabled=no' in enable_cmd
+
+    # 4. Delete command cleans secret and kicks session
+    delete_cmd = build_pppoe_delete_command("user_test")
+    assert '/ppp secret remove [find where name="user_test"]' in delete_cmd
+
+    # 5. Batch rendering includes ack, check-certificate=no, and preview bypass
+    cmd = RouterCommand(
+        id="cmd-123",
+        tenant_id="t-1",
+        router_id="r-1",
+        description="test",
+        script=disable_cmd,
+        status=RouterCommandStatus.pending,
+    )
+    batch_text = render_router_batch([cmd], "https://cowen-preview.vercel.app/api/router/ack", "raw-token-abc")
+    assert "# COwen-Batch-OK" in batch_text
+    assert "cmd-123" in batch_text
+    assert "check-certificate=no" in batch_text
+    assert "x-vercel-protection-bypass:" in batch_text
+    assert ":local ackData" in batch_text
+
+
+
 

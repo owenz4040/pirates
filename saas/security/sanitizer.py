@@ -106,6 +106,46 @@ def validate_comment(comment: str | None) -> str:
     return cleaned[:128]
 
 
+def build_pppoe_profile_command(
+    name: str,
+    rate_limit: str,
+) -> str:
+    """Build a safe, idempotent RouterOS command to create or update a PPP profile."""
+    v_name = validate_plan_name(name)
+    v_rate = validate_rate_limit(rate_limit)
+
+    match = f"name={quote_routeros(v_name)}"
+    add_args = f"rate-limit={quote_routeros(v_rate)}"
+    set_args = f"rate-limit={quote_routeros(v_rate)}"
+
+    return (
+        f":if ([:len [/ppp profile find where {match}]] = 0) "
+        f"do={{/ppp profile add {match} {add_args}}} "
+        f"else={{/ppp profile set [find where {match}] {set_args}}}"
+    )
+
+
+def build_pppoe_disable_command(username: str) -> str:
+    """Build a safe command to disable a PPPoE secret and kick active sessions immediately."""
+    v_user = validate_pppoe_username(username)
+    q_user = quote_routeros(v_user)
+    return f"/ppp secret set [find where name={q_user}] disabled=yes; :do {{/ppp active remove [find where name={q_user}]}} on-error={{}}"
+
+
+def build_pppoe_enable_command(username: str) -> str:
+    """Build a safe command to enable a PPPoE secret."""
+    v_user = validate_pppoe_username(username)
+    q_user = quote_routeros(v_user)
+    return f"/ppp secret set [find where name={q_user}] disabled=no"
+
+
+def build_pppoe_delete_command(username: str) -> str:
+    """Build a safe command to remove a PPPoE secret and kick active sessions."""
+    v_user = validate_pppoe_username(username)
+    q_user = quote_routeros(v_user)
+    return f":do {{/ppp secret remove [find where name={q_user}]}} on-error={{}}; :do {{/ppp active remove [find where name={q_user}]}} on-error={{}}"
+
+
 def build_pppoe_secret_command(
     username: str,
     password: str,

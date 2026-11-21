@@ -67,6 +67,7 @@
           <th>Contact</th>
           <th>Status</th>
           <th>Expires</th>
+          <th style="text-align: right;">Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -102,6 +103,22 @@
             {% else %}
             <span style="font-size: 12px; color: var(--text-dim);">Unlimited</span>
             {% endif %}
+          </td>
+          <td style="text-align: right;">
+            <div style="display: inline-flex; gap: 8px; justify-content: flex-end;">
+              <form method="post" action="/tenant/pppoe/subscribers/{{ s.id }}/toggle-status" style="margin: 0;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                {% if s.status.value == 'active' %}
+                <button type="submit" class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px; color: var(--red);" title="Suspend and kick active session">Suspend</button>
+                {% else %}
+                <button type="submit" class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px; color: var(--green);" title="Reactivate subscriber on router">Activate</button>
+                {% endif %}
+              </form>
+              <form method="post" action="/tenant/pppoe/subscribers/{{ s.id }}/delete" style="margin: 0;" onsubmit="return confirm('Delete subscriber {{ s.username }} and remove credentials from router?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px; color: var(--text-dim);" title="Delete subscriber">✕</button>
+              </form>
+            </div>
           </td>
         </tr>
         {% endfor %}
