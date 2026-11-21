@@ -93,6 +93,7 @@ def test_control_3_production_prohibits_console_email_fallback(monkeypatch):
     """Control 3: In production, console OTP fallback is prohibited and raises EmailDeliveryError."""
     monkeypatch.setattr(saas_settings, "saas_env", "production")
     monkeypatch.setattr(saas_settings, "resend_api_key", "")
+    monkeypatch.delenv("RESEND_API_KEY", raising=False)
 
     with pytest.raises(EmailDeliveryError) as exc_info:
         send_superadmin_otp_email(to_email="owenzcolin@gmail.com", otp_code="123456")

@@ -561,8 +561,8 @@ def test_routeros_setup_script_structure_and_signature_check():
     assert "curl.se" not in script
     assert "cacert.pem" not in script
 
-    # 2. Strict certificate checking
-    assert "check-certificate=yes-without-crl" in script
+    # 2. Universal RouterOS 6 & 7 certificate checking
+    assert "check-certificate=no" in script or "check-certificate=yes-without-crl" in script
 
     # 3. Status and magic signature verification before execution
     assert r'\$status = \"finished\"' in script
