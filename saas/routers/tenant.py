@@ -732,15 +732,30 @@ def tenant_router_rotate_token(
     )
 
 
-@tenant_router.get("/tenant/routers/{router_id}/script.rsc")
+@tenant_router.post("/tenant/routers/{router_id}/download-rsc", dependencies=[Depends(verify_csrf_token)])
 def tenant_router_download_rsc(
     request: Request,
     router_id: str,
-    token: str | None = None,
+    token: str | None = Form(None),
+    rotate: bool = Form(False),
     context: TenantContext = Depends(require_tenant_context),
     db: Session = Depends(get_saas_db),
 ):
-    """Generates and downloads a valid, injection-proof RouterOS .rsc setup file for the router."""
+    """Securely generates and downloads a valid RouterOS .rsc setup file for the router.
+
+    Security Guarantees:
+    1. Requires authenticated tenant session (context.tenant.id).
+    2. Verifies that the requested router belongs exclusively to the authenticated tenant (404 otherwise).
+    3. Enforces CSRF token verification on the state-changing POST operation.
+    4. Never exposes or accepts router authentication tokens in URL query parameters.
+    5. If a matching unrotated token is supplied in the POST body, it is embedded into the script.
+    6. If no token is provided or rotation is requested, a fresh cryptographically secure 32-byte token
+       is generated, hashed, persisted to the database, and embedded directly into the downloadable .rsc attachment.
+       Previously issued tokens are permanently invalidated.
+    7. Returns the file directly as an attachment ('Content-Disposition: attachment; filename="cowen_{safe_name}.rsc"').
+    8. Sets strict no-cache headers to prevent proxy or browser disk caching.
+    9. Zero logging of raw tokens or token hashes.
+    """
     router = db.scalar(
         select(Router).where(
             Router.id == router_id,
@@ -750,15 +765,23 @@ def tenant_router_download_rsc(
     if not router:
         raise HTTPException(status_code=404, detail="Router not found.")
 
-    if not token or hash_token(token.strip()) != router.token_hash:
-        raise HTTPException(
-            status_code=400,
-            detail="A valid router enrollment token is required to download the configuration file. If misplaced, please rotate the token from the Router Fleet page.",
-        )
+    raw_token: str | None = None
+
+    # If an active token was provided in the POST body, check if it matches current hash
+    if token and token.strip() and not rotate:
+        candidate = token.strip()
+        if hash_token(candidate) == router.token_hash:
+            raw_token = candidate
+
+    # If no valid token was provided in body or rotation was requested, securely rotate and persist
+    if not raw_token:
+        raw_token = generate_secure_token(32)
+        router.token_hash = hash_token(raw_token)
+        db.commit()
 
     base_url = str(request.base_url).rstrip("/")
     sync_url = f"{base_url}/api/router/sync"
-    rsc_content = build_mikrotik_rsc_file(sync_url, token.strip(), router.name)
+    rsc_content = build_mikrotik_rsc_file(sync_url, raw_token, router.name)
     safe_filename = re.sub(r"[^a-zA-Z0-9_\-]", "_", router.name)
 
     return Response(
@@ -766,8 +789,11 @@ def tenant_router_download_rsc(
         media_type="text/plain; charset=utf-8",
         headers={
             "Content-Disposition": f'attachment; filename="cowen_{safe_filename}.rsc"',
+            "Cache-Control": "no-store, no-cache, must-revalidate, private",
+            "Pragma": "no-cache",
         },
     )
+
 
 
 

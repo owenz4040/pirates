@@ -57,9 +57,13 @@
           <div style="font-size: 15px; font-weight: 700; color: #fff;">Download .rsc Setup Script (Winbox / Files)</div>
           <div style="font-size: 12px; color: var(--text-dim);">Eliminates terminal paste line-breaks and quoting errors completely.</div>
         </div>
-        <a href="/tenant/routers/{{ created_router.id }}/script.rsc?token={{ enrollment_token }}" class="btn btn-gold" download style="display: inline-flex; align-items: center; gap: 8px; font-weight: 600;">
-          📥 Download cowen_{{ created_router.name }}.rsc
-        </a>
+        <form method="post" action="/tenant/routers/{{ created_router.id }}/download-rsc" style="display: inline; margin: 0;">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="token" value="{{ enrollment_token }}">
+          <button type="submit" class="btn btn-gold" style="display: inline-flex; align-items: center; gap: 8px; font-weight: 600;">
+            📥 Download cowen_{{ created_router.name }}.rsc
+          </button>
+        </form>
       </div>
 
       <div style="font-size: 13px; color: var(--text-muted); line-height: 1.6; margin-top: 10px;">

@@ -619,31 +619,115 @@ def test_routeros_quoting_has_zero_unescaped_internal_quotes():
 
 
 def test_routeros_downloadable_rsc_endpoint(client, db_session, seed_data):
-    """Verifies that the /tenant/routers/{id}/script.rsc endpoint returns a downloadable .rsc file when token matches."""
+    """Verifies that configuration download uses CSRF-protected POST, never exposes tokens in URLs, and isolates tenants."""
     user_a = seed_data["user_a"]
     router_a = seed_data["router_a"]
+    router_b = seed_data["router_b"]
     valid_raw_token = "alpha_token_1"
     headers = {"Authorization": f"Bearer {user_a.id}"}
 
-    # 1. Request without token -> 400 Bad Request
-    resp_no_token = client.get(f"/tenant/routers/{router_a.id}/script.rsc", headers=headers)
-    assert resp_no_token.status_code == 400
+    # 1. GET requests to the download endpoint are rejected (must be POST)
+    resp_get = client.get(f"/tenant/routers/{router_a.id}/download-rsc", headers=headers)
+    assert resp_get.status_code == 405  # Method Not Allowed
 
-    # 2. Request with invalid token -> 400 Bad Request
-    resp_bad_token = client.get(f"/tenant/routers/{router_a.id}/script.rsc?token=wrong_token", headers=headers)
-    assert resp_bad_token.status_code == 400
+    # 2. Old GET endpoint with query parameter token is completely eliminated
+    resp_old = client.get(f"/tenant/routers/{router_a.id}/script.rsc?token={valid_raw_token}", headers=headers)
+    assert resp_old.status_code == 404
 
-    # 3. Request with valid token -> 200 OK with .rsc attachment headers
-    resp_ok = client.get(f"/tenant/routers/{router_a.id}/script.rsc?token={valid_raw_token}", headers=headers)
-    assert resp_ok.status_code == 200
-    assert "attachment; filename=" in resp_ok.headers.get("content-disposition", "")
-    assert ".rsc" in resp_ok.headers.get("content-disposition", "")
-    assert "COwen_Sync_Script" in resp_ok.text
-    assert "enable-ssl-certificate" in resp_ok.text
+    # 3. POST download using active token in POST body (no rotation)
+    resp_post_current = client.post(
+        f"/tenant/routers/{router_a.id}/download-rsc",
+        data={"token": valid_raw_token},
+        headers=headers,
+    )
+    assert resp_post_current.status_code == 200
+    assert "attachment; filename=" in resp_post_current.headers.get("content-disposition", "")
+    assert ".rsc" in resp_post_current.headers.get("content-disposition", "")
+    assert "no-store" in resp_post_current.headers.get("cache-control", "")
+    assert valid_raw_token in resp_post_current.text
+    assert router_a.name in resp_post_current.text
+    # Verify sync works with this token
+    sync_resp = client.post("/api/router/sync", headers={"X-Router-Token": valid_raw_token})
+    assert sync_resp.status_code == 200
 
-    # 4. Request cross-tenant router -> 404 Not Found
-    router_b = seed_data["router_b"]
-    resp_cross = client.get(f"/tenant/routers/{router_b.id}/script.rsc?token=beta_token_1", headers=headers)
+    # 4. POST download requesting rotation (or without token): rotates token and invalidates old one
+    resp_rotate = client.post(
+        f"/tenant/routers/{router_a.id}/download-rsc",
+        data={"rotate": "true"},
+        headers=headers,
+    )
+    assert resp_rotate.status_code == 200
+    assert "COwen_Sync_Script" in resp_rotate.text
+    # The old token is now IMMEDIATELY invalidated
+    sync_old = client.post("/api/router/sync", headers={"X-Router-Token": valid_raw_token})
+    assert sync_old.status_code == 401
+
+    # 5. Cross-tenant isolation: Tenant A cannot download Tenant B's router configuration
+    resp_cross = client.post(
+        f"/tenant/routers/{router_b.id}/download-rsc",
+        data={"rotate": "true"},
+        headers=headers,
+    )
     assert resp_cross.status_code == 404
+
+
+def test_routeros_download_csrf_enforcement_with_browser_session(client, db_session, seed_data):
+    """Verifies that browser session-authenticated download strictly enforces CSRF protection."""
+    user_a = seed_data["user_a"]
+    router_a = seed_data["router_a"]
+
+    # Log in via HTML form to establish session cookie
+    login_page = client.get("/tenant/login")
+    match = re.search(r'name="csrf_token"\s+value="([^"]+)"', login_page.text)
+    csrf_token = match.group(1)
+
+    login_post = client.post(
+        "/tenant/login",
+        data={"email": user_a.email, "password": "AlphaPass123!", "csrf_token": csrf_token},
+        follow_redirects=False,
+    )
+    assert login_post.status_code == 303
+
+    # Forged request: POST without CSRF token -> 403 Forbidden
+    forged_resp = client.post(f"/tenant/routers/{router_a.id}/download-rsc", data={"rotate": "true"})
+    assert forged_resp.status_code == 403
+    assert "CSRF verification failed" in forged_resp.text
+
+    # Valid request: POST with valid session CSRF token -> 200 OK download
+    valid_resp = client.post(
+        f"/tenant/routers/{router_a.id}/download-rsc",
+        data={"rotate": "true", "csrf_token": csrf_token},
+    )
+    assert valid_resp.status_code == 200
+    assert "attachment; filename=" in valid_resp.headers.get("content-disposition", "")
+    assert ".rsc" in valid_resp.headers.get("content-disposition", "")
+
+
+def test_failed_download_recovery_and_flash_storage_safety():
+    """Verifies recovery mechanism exists and no sensitive information is persisted to flash storage."""
+    from saas.security.sanitizer import (
+        build_mikrotik_rsc_file,
+        build_mikrotik_sync_script_source,
+    )
+
+    url = "https://cowen.vercel.app/api/router/sync"
+    raw_token = "recovery-token-xyz789"
+    router_name = "Core-Router"
+
+    # 1. Flash storage safety: Zero disk file writes in RAM sync script
+    source = build_mikrotik_sync_script_source(url, raw_token)
+    assert "dst-path" not in source
+    assert "file=" not in source
+    assert "file-name=" not in source
+    assert "output=user as-value" in source
+
+    # 2. RSC setup file contains clear on-error recovery wrappers so partial runs don't lock out the device
+    rsc = build_mikrotik_rsc_file(url, raw_token, router_name)
+    assert ":do { /system script remove" in rsc
+    assert "on-error={}" in rsc
+    assert ":do { /system scheduler remove" in rsc
+    assert "on-error={}" in rsc
+    assert "/system script run COwen_Sync_Script" in rsc
+
 
 
