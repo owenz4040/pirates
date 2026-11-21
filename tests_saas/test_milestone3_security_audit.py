@@ -556,22 +556,94 @@ def test_routeros_setup_script_structure_and_signature_check():
         router_name="Main-Core-Router",
     )
 
-    # 1. Verification of HTTPS CA certificate prerequisite
-    assert "PREREQUISITE" in script
-    assert "cacert.pem" in script
+    # 1. Verification of HTTPS CA certificate prerequisite: uses official RouterOS 7 trust store
+    assert "/certificate enable-ssl-certificate" in script
+    assert "curl.se" not in script
+    assert "cacert.pem" not in script
 
     # 2. Strict certificate checking
     assert "check-certificate=yes-without-crl" in script
 
     # 3. Status and magic signature verification before execution
-    assert '$status = \\"finished\\"' in script
-    assert '[:pick $body 0 16] = \\"# COwen-Batch-OK\\"' in script
+    assert r'\$status = \"finished\"' in script
+    assert r'[:pick \$body 0 16] = \"# COwen-Batch-OK\"' in script
 
     # 4. Memory size boundaries
-    assert "[:len $body] <= 32768" in script
+    assert "[:len $body] <= 32768" in script or r"[:len \$body] <= 32768" in script
 
     # 5. Safe execution wrapping
     assert ":do {" in script
-    assert ":local run [:parse $body];" in script
-    assert "$run;" in script
+    assert ":local run [:parse $body];" in script or r":local run [:parse \$body];" in script
+    assert "$run;" in script or r"\$run;" in script
+
+
+def test_routeros_quoting_has_zero_unescaped_internal_quotes():
+    """Validates that RouterOS script source contains zero unescaped internal quotes and proper variable escapes."""
+    from saas.security.sanitizer import (
+        build_mikrotik_rsc_file,
+        build_mikrotik_sync_script_source,
+        build_mikrotik_terminal_commands,
+    )
+
+    url = "https://cowen.vercel.app/api/router/sync"
+    token = "test-token-abcdef123456"
+    router_name = "Pirates-WiFi"
+
+    source = build_mikrotik_sync_script_source(url, token)
+
+    # Walk through source character by character to ensure NO unescaped quotes exist
+    escaped = False
+    unescaped_quotes = []
+    for idx, ch in enumerate(source):
+        if ch == '\\' and not escaped:
+            escaped = True
+            continue
+        if ch == '"' and not escaped:
+            unescaped_quotes.append(idx)
+        escaped = False
+
+    assert len(unescaped_quotes) == 0, f"Found unescaped quotes in source at {unescaped_quotes}"
+
+    # Verify variable references inside source are escaped with \$ to prevent premature evaluation
+    for var in [r"\$ver", r"\$upt", r"\$cpu", r"\$brd", r"\$info", r"\$body", r"\$status", r"\$res", r"\$run"]:
+        assert var in source, f"Variable {var} not properly escaped in script source"
+
+    # Verify both terminal and rsc file generators
+    rsc = build_mikrotik_rsc_file(url, token, router_name)
+    assert "/system script add name=\"COwen_Sync_Script\"" in rsc
+    assert "/system scheduler add name=\"COwen_Sync\"" in rsc
+    assert "file-name=" not in source  # Zero NAND writes in the script itself
+
+    term = build_mikrotik_terminal_commands(url, token, router_name)
+    assert "/system script run COwen_Sync_Script" in term
+
+
+def test_routeros_downloadable_rsc_endpoint(client, db_session, seed_data):
+    """Verifies that the /tenant/routers/{id}/script.rsc endpoint returns a downloadable .rsc file when token matches."""
+    user_a = seed_data["user_a"]
+    router_a = seed_data["router_a"]
+    valid_raw_token = "alpha_token_1"
+    headers = {"Authorization": f"Bearer {user_a.id}"}
+
+    # 1. Request without token -> 400 Bad Request
+    resp_no_token = client.get(f"/tenant/routers/{router_a.id}/script.rsc", headers=headers)
+    assert resp_no_token.status_code == 400
+
+    # 2. Request with invalid token -> 400 Bad Request
+    resp_bad_token = client.get(f"/tenant/routers/{router_a.id}/script.rsc?token=wrong_token", headers=headers)
+    assert resp_bad_token.status_code == 400
+
+    # 3. Request with valid token -> 200 OK with .rsc attachment headers
+    resp_ok = client.get(f"/tenant/routers/{router_a.id}/script.rsc?token={valid_raw_token}", headers=headers)
+    assert resp_ok.status_code == 200
+    assert "attachment; filename=" in resp_ok.headers.get("content-disposition", "")
+    assert ".rsc" in resp_ok.headers.get("content-disposition", "")
+    assert "COwen_Sync_Script" in resp_ok.text
+    assert "enable-ssl-certificate" in resp_ok.text
+
+    # 4. Request cross-tenant router -> 404 Not Found
+    router_b = seed_data["router_b"]
+    resp_cross = client.get(f"/tenant/routers/{router_b.id}/script.rsc?token=beta_token_1", headers=headers)
+    assert resp_cross.status_code == 404
+
 

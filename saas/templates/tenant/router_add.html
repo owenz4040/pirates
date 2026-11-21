@@ -50,14 +50,51 @@
       </div>
     </div>
 
+    <div style="margin-top: 24px; padding: 18px; background: rgba(223, 183, 88, 0.05); border: 1px solid rgba(223, 183, 88, 0.25); border-radius: 8px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 12px;">
+        <div>
+          <span class="badge badge-gold" style="font-size: 11px; margin-bottom: 4px;">METHOD 1 — RECOMMENDED</span>
+          <div style="font-size: 15px; font-weight: 700; color: #fff;">Download .rsc Setup Script (Winbox / Files)</div>
+          <div style="font-size: 12px; color: var(--text-dim);">Eliminates terminal paste line-breaks and quoting errors completely.</div>
+        </div>
+        <a href="/tenant/routers/{{ created_router.id }}/script.rsc?token={{ enrollment_token }}" class="btn btn-gold" download style="display: inline-flex; align-items: center; gap: 8px; font-weight: 600;">
+          📥 Download cowen_{{ created_router.name }}.rsc
+        </a>
+      </div>
+
+      <div style="font-size: 13px; color: var(--text-muted); line-height: 1.6; margin-top: 10px;">
+        <strong>Installation Steps:</strong>
+        <ol style="margin: 6px 0 0 18px; padding: 0;">
+          <li>Click <strong>Download .rsc</strong> above to save the configuration script.</li>
+          <li>In <strong>Winbox</strong>, open the <strong>Files</strong> window from the left navigation.</li>
+          <li>Drag and drop the downloaded <code style="color: var(--gold);">cowen_{{ created_router.name }}.rsc</code> into the Winbox Files list.</li>
+          <li>Open <strong>New Terminal</strong> in Winbox (or connect via SSH) and run:
+            <div style="margin: 6px 0; background: #07090e; padding: 6px 12px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--gold); border: 1px solid var(--border);">
+              /import file-name=cowen_{{ created_router.name }}.rsc
+            </div>
+          </li>
+          <li>The script will verify root certificates, register the sync worker, and run the initial sync immediately.</li>
+        </ol>
+      </div>
+    </div>
+
     <div style="margin-top: 24px;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-        <div style="font-size: 13px; font-weight: 600; color: #fff;">MikroTik RouterOS Terminal Command (Paste into Winbox / SSH)</div>
-        <button type="button" class="btn btn-gold" style="padding: 6px 14px; font-size: 12px;" onclick="copyToClipboard(document.getElementById('syncScriptText').innerText, this)">
-          Copy Script
+        <div>
+          <span class="badge badge-secondary" style="font-size: 11px; margin-bottom: 4px;">METHOD 2</span>
+          <div style="font-size: 13px; font-weight: 600; color: #fff;">Direct Terminal Paste (Winbox / SSH)</div>
+        </div>
+        <button type="button" class="btn btn-secondary" style="padding: 6px 14px; font-size: 12px;" onclick="copyToClipboard(document.getElementById('syncScriptText').innerText, this)">
+          Copy Commands
         </button>
       </div>
-      <div class="code-box" id="syncScriptText">{{ sync_script }}</div>
+      <div class="code-box" id="syncScriptText" style="max-height: 220px; overflow-y: auto;">{{ sync_script }}</div>
+    </div>
+
+    <div style="margin-top: 20px; padding: 12px 16px; background: rgba(30, 41, 59, 0.4); border-radius: 6px; border-left: 3px solid var(--blue); font-size: 12px; color: var(--text-muted); line-height: 1.5;">
+      <strong style="color: #fff;">🔒 TLS Certificate Information:</strong><br>
+      • <strong>RouterOS 7 (including 7.25.1):</strong> The script automatically executes <code style="color: var(--gold);">/certificate enable-ssl-certificate</code> to load MikroTik's official Mozilla root CA trust store.<br>
+      • <strong>RouterOS 6 (6.49.18):</strong> If connecting via HTTPS on RouterOS 6, ensure your root CA certificate is imported into <code style="color: var(--gold);">/certificate</code>.
     </div>
 
     <div style="margin-top: 24px; display: flex; gap: 12px;">

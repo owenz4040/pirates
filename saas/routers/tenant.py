@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 import uuid
 from datetime import datetime, timezone
@@ -65,6 +66,9 @@ from saas.security.rate_limit import (
 from saas.security.sanitizer import (
     CommandInjectionError,
     build_hotspot_user_command,
+    build_mikrotik_rsc_file,
+    build_mikrotik_sync_script_source,
+    build_mikrotik_terminal_commands,
     build_pppoe_secret_command,
     quote_routeros,
     validate_package_name,
@@ -453,49 +457,16 @@ def tenant_dashboard(
 # =====================================================================
 
 def _build_mikrotik_setup_script(sync_url: str, raw_token: str, router_name: str) -> str:
-    """Generate a safe, RAM-only RouterOS setup script compatible with RouterOS 6.49+ and RouterOS 7.x.
+    """Generate safe, RAM-only RouterOS commands compatible with RouterOS 6.49+ and RouterOS 7.x.
 
     Zero files are written to NAND flash storage.
     Initial removal is safely wrapped with on-error handlers.
     Response is strictly validated: status must be finished, size within 32KB,
     and payload must match the '# COwen-Batch-OK' signature before execution in memory.
+    Internal quotes are fully escaped (\\\") and variables (\\$) to prevent premature expansion
+    and CRLF terminal line continuation issues.
     """
-    clean_name = quote_routeros(router_name)
-    q_url = quote_routeros(sync_url)
-    q_header = quote_routeros(f"Content-Type: application/x-www-form-urlencoded,X-Router-Token: {raw_token}")
-
-    return (
-        f"# MikroTik RouterOS Outbound HTTPS Synchronization Script\n"
-        f"# Device: {clean_name}\n"
-        f"# PREREQUISITE: MikroTik routers require CA root certificates installed for HTTPS validation.\n"
-        f"# RouterOS 7: /certificate enable-ssl-certificate\n"
-        f"# RouterOS 6 / 7: /tool fetch url=\"https://curl.se/ca/cacert.pem\" dst-path=\"cacert.pem\" check-certificate=no; /certificate import file-name=\"cacert.pem\" passphrase=\"\"\n"
-        f":do {{ /system script remove [find name=\"COwen_Sync_Script\"] }} on-error={{}}\n"
-        f":do {{ /system scheduler remove [find name=\"COwen_Sync\"] }} on-error={{}}\n\n"
-        f"/system script add name=\"COwen_Sync_Script\" source=\"\\\n"
-        f"  :local ver [/system resource get version];\\\n"
-        f"  :local upt [/system resource get uptime];\\\n"
-        f"  :local cpu [/system resource get cpu-load];\\\n"
-        f"  :local brd [/system resource get board-name];\\\n"
-        f"  :local info (\\\"version=\\\" . $ver . \\\"&uptime=\\\" . $upt . \\\"&cpu=\\\" . $cpu . \\\"&board=\\\" . $brd);\\\n"
-        f"  :local body \\\"\\\";\\\n"
-        f"  :local status \\\"\\\";\\\n"
-        f"  :do {{\\\n"
-        f"    :local res [/tool fetch url={q_url} http-method=post http-header-field={q_header} http-data=$info check-certificate=yes-without-crl output=user as-value];\\\n"
-        f"    :set status ($res->\\\"status\\\");\\\n"
-        f"    :set body ($res->\\\"data\\\");\\\n"
-        f"  }} on-error={{ :log warning \\\"COwen_Sync: fetch failed\\\" }};\\\n"
-        f"  :if ($status = \\\"finished\\\" and [:len $body] >= 16 and [:len $body] <= 32768 and [:pick $body 0 16] = \\\"# COwen-Batch-OK\\\") do={{\\\n"
-        f"    :do {{\\\n"
-        f"      :local run [:parse $body];\\\n"
-        f"      $run;\\\n"
-        f"    }} on-error={{ :log warning \\\"COwen_Sync: parse or execution error\\\" }};\\\n"
-        f"  }};\\\n"
-        f"\"\n\n"
-        f"/system scheduler add name=\"COwen_Sync\" interval=60s on-event=\"COwen_Sync_Script\" start-time=startup\n"
-        f"# Run once immediately:\n"
-        f"/system script run COwen_Sync_Script\n"
-    )
+    return build_mikrotik_terminal_commands(sync_url, raw_token, router_name)
 
 
 @tenant_router.get("/tenant/routers", response_class=HTMLResponse)
@@ -759,6 +730,45 @@ def tenant_router_rotate_token(
             "csrf_token": get_csrf_token(request),
         },
     )
+
+
+@tenant_router.get("/tenant/routers/{router_id}/script.rsc")
+def tenant_router_download_rsc(
+    request: Request,
+    router_id: str,
+    token: str | None = None,
+    context: TenantContext = Depends(require_tenant_context),
+    db: Session = Depends(get_saas_db),
+):
+    """Generates and downloads a valid, injection-proof RouterOS .rsc setup file for the router."""
+    router = db.scalar(
+        select(Router).where(
+            Router.id == router_id,
+            Router.tenant_id == context.tenant.id,
+        )
+    )
+    if not router:
+        raise HTTPException(status_code=404, detail="Router not found.")
+
+    if not token or hash_token(token.strip()) != router.token_hash:
+        raise HTTPException(
+            status_code=400,
+            detail="A valid router enrollment token is required to download the configuration file. If misplaced, please rotate the token from the Router Fleet page.",
+        )
+
+    base_url = str(request.base_url).rstrip("/")
+    sync_url = f"{base_url}/api/router/sync"
+    rsc_content = build_mikrotik_rsc_file(sync_url, token.strip(), router.name)
+    safe_filename = re.sub(r"[^a-zA-Z0-9_\-]", "_", router.name)
+
+    return Response(
+        content=rsc_content,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="cowen_{safe_filename}.rsc"',
+        },
+    )
+
 
 
 # =====================================================================

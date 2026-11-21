@@ -157,3 +157,81 @@ def build_hotspot_user_command(
         f"do={{/ip hotspot user add {match} {add_args}}} "
         f"else={{/ip hotspot user set [find where {match}] {set_args}}}"
     )
+
+
+def build_mikrotik_sync_script_source(sync_url: str, raw_token: str) -> str:
+    """Builds the in-memory RouterOS script source for periodic cloud synchronization.
+
+    All internal string quotes are escaped as \\\" and variable references as \\$
+    to guarantee safe parsing into the RouterOS script repository with zero quote collisions
+    or premature variable expansions in the terminal.
+    Zero files are written to NAND storage.
+    """
+    clean_url = sync_url.strip().replace('"', '').replace('\\', '').replace('$', '')
+    clean_token = raw_token.strip().replace('"', '').replace('\\', '').replace('$', '')
+    header_val = f"Content-Type: application/x-www-form-urlencoded,X-Router-Token: {clean_token}"
+
+    source_statements = [
+        ":local ver [/system resource get version];",
+        ":local upt [/system resource get uptime];",
+        ":local cpu [/system resource get cpu-load];",
+        ":local brd [/system resource get board-name];",
+        ':local info (\\"version=\\" . \\$ver . \\"&uptime=\\" . \\$upt . \\"&cpu=\\" . \\$cpu . \\"&board=\\" . \\$brd);',
+        ':local body \\"\\";',
+        ':local status \\"\\";',
+        f':do {{ :local res [/tool fetch url=\\"{clean_url}\\" http-method=post http-header-field=\\"{header_val}\\" http-data=\\$info check-certificate=yes-without-crl output=user as-value]; :set status (\\$res->\\"status\\"); :set body (\\$res->\\"data\\"); }} on-error={{ :log warning \\"COwen_Sync: HTTPS fetch failed - check network or TLS certificates\\" }};',
+        ':if (\\$status = \\"finished\\" and [:len \\$body] >= 16 and [:len \\$body] <= 32768 and [:pick \\$body 0 16] = \\"# COwen-Batch-OK\\") do={{ :do {{ :local run [:parse \\$body]; \\$run; }} on-error={{ :log warning \\"COwen_Sync: batch command execution error\\" }}; }};'
+    ]
+    return " ".join(source_statements)
+
+
+def build_mikrotik_rsc_file(sync_url: str, raw_token: str, router_name: str) -> str:
+    """Generates a downloadable, self-contained RouterOS .rsc configuration script.
+
+    Compatible with RouterOS 7.x (including 7.25.1) and RouterOS 6.49+.
+    Can be imported safely using: /import file-name=cowen_setup.rsc
+    Avoids multiline terminal paste and CRLF buffer truncation issues.
+    """
+    clean_name = validate_plan_name(router_name)
+    script_source = build_mikrotik_sync_script_source(sync_url, raw_token)
+
+    return (
+        f"# =====================================================================\n"
+        f"# COwen ISP SaaS — MikroTik RouterOS Setup Configuration\n"
+        f"# Target Router: {clean_name}\n"
+        f"# Cloud Endpoint: {sync_url}\n"
+        f"# Architecture: Outbound HTTPS Polling (Port 443 in RAM)\n"
+        f"# =====================================================================\n\n"
+        f"# Step 1: Enable native SSL/TLS root certificates on RouterOS 7\n"
+        f":do {{ /certificate enable-ssl-certificate }} on-error={{\n"
+        f"    :log info \"COwen_Sync: enable-ssl-certificate not supported on RouterOS 6 (ensure CA imported)\"\n"
+        f"}}\n\n"
+        f"# Step 2: Remove any previous synchronization script and scheduler safely\n"
+        f":do {{ /system script remove [find name=\"COwen_Sync_Script\"] }} on-error={{}}\n"
+        f":do {{ /system scheduler remove [find name=\"COwen_Sync\"] }} on-error={{}}\n\n"
+        f"# Step 3: Add synchronization script to RAM script repository\n"
+        f"/system script add name=\"COwen_Sync_Script\" comment=\"COwen ISP SaaS Cloud Sync\" source=\"{script_source}\"\n\n"
+        f"# Step 4: Schedule synchronization every 60 seconds\n"
+        f"/system scheduler add name=\"COwen_Sync\" interval=60s on-event=\"COwen_Sync_Script\" start-time=startup comment=\"COwen ISP SaaS Cloud Poller\"\n\n"
+        f"# Step 5: Execute initial synchronization immediately\n"
+        f"/system script run COwen_Sync_Script\n"
+        f":log info \"COwen_Sync: Setup successfully imported and initialized.\"\n"
+    )
+
+
+def build_mikrotik_terminal_commands(sync_url: str, raw_token: str, router_name: str) -> str:
+    """Generates terminal paste commands with single-line script source to avoid CRLF line continuation bugs."""
+    clean_name = validate_plan_name(router_name)
+    script_source = build_mikrotik_sync_script_source(sync_url, raw_token)
+
+    return (
+        f"# MikroTik RouterOS Outbound HTTPS Synchronization Setup\n"
+        f"# Device: {clean_name}\n"
+        f":do {{ /certificate enable-ssl-certificate }} on-error={{}}\n"
+        f":do {{ /system script remove [find name=\"COwen_Sync_Script\"] }} on-error={{}}\n"
+        f":do {{ /system scheduler remove [find name=\"COwen_Sync\"] }} on-error={{}}\n"
+        f"/system script add name=\"COwen_Sync_Script\" comment=\"COwen ISP SaaS Cloud Sync\" source=\"{script_source}\"\n"
+        f"/system scheduler add name=\"COwen_Sync\" interval=60s on-event=\"COwen_Sync_Script\" start-time=startup\n"
+        f"/system script run COwen_Sync_Script\n"
+    )
+
