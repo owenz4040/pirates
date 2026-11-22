@@ -1977,7 +1977,7 @@ def render_router_batch(batch: list[RouterCommand], ack_url: str, raw_token: str
     if "localhost" not in ack_url and "127.0.0.1" not in ack_url and ack_url.startswith("http://"):
         ack_url = ack_url.replace("http://", "https://", 1)
 
-    lines = ["# COwen-Batch-OK", ':local ok ""', ':local failed ""']
+    lines = ["# COwen-Batch-OK", ':local ok "";', ':local failed "";']
     for cmd in batch:
         # Wrap each command safely so a failure in one command does not halt the others
         clean_script = cmd.script.strip().rstrip(";")
@@ -1993,7 +1993,7 @@ def render_router_batch(batch: list[RouterCommand], ack_url: str, raw_token: str
 
     lines.append(
         f":local ackData (\"ok=\" . $ok . \"&failed=\" . $failed);\n"
-        f":do {{ /tool fetch url={q_ack_url} http-method=post http-header-field={q_ack_header} http-data=$ackData check-certificate=yes-without-crl output=none; :log info \"COwen_Sync: batch commands executed and acknowledged\"; }} on-error={{ :log warning \"COwen_Sync: could not report results\" }};"
+        f":do {{ /tool fetch url={q_ack_url} http-method=post http-header-field={q_ack_header} http-data=$ackData check-certificate=yes-without-crl output=user as-value; :log info \"COwen_Sync: batch commands executed and acknowledged\"; }} on-error={{ :log warning \"COwen_Sync: could not report results\" }};"
     )
     return "\n".join(lines) + "\n"
 
