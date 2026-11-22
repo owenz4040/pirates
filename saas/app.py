@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from saas.config import saas_settings
-from saas.database import SaasBase, ensure_schema_synced_once, get_saas_db, saas_engine
+from saas.database import SaasBase, get_saas_db, saas_engine
 from saas.models.payments import TenantPaymentConfig
 from saas.models.router import Router, RouterStatus
 from saas.routers.marketing import marketing_router
@@ -33,13 +33,6 @@ from saas.security.context import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Ensure database schema is synced during application startup
-    import os
-    if not os.environ.get("PYTEST_CURRENT_TEST") and os.environ.get("TESTING") != "true":
-        try:
-            ensure_schema_synced_once(saas_engine)
-        except Exception:
-            pass
     yield
 
 
@@ -49,6 +42,61 @@ app = FastAPI(
     description="Multi-tenant ISP & Hotspot Billing SaaS Platform",
     lifespan=lifespan,
 )
+
+
+@app.get("/api/system/migrate")
+def run_system_migration(key: str = ""):
+    """Safe, single-runner administrative migration endpoint."""
+    if key != "cowen-prod-migrate-2026":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    from sqlalchemy import text, inspect
+    results = []
+    is_pg = saas_engine.dialect.name == "postgresql"
+
+    if is_pg:
+        stmts = [
+            "ALTER TABLE saas_customer_payments ADD COLUMN IF NOT EXISTS package_id VARCHAR(36)",
+            "ALTER TABLE saas_customer_payments ADD COLUMN IF NOT EXISTS router_id VARCHAR(36)",
+            "ALTER TABLE saas_customer_payments ADD COLUMN IF NOT EXISTS checkout_request_id VARCHAR(64)",
+            "ALTER TABLE saas_customer_payments ADD COLUMN IF NOT EXISTS provider_reference VARCHAR(128)",
+            "ALTER TABLE saas_customer_payments ADD COLUMN IF NOT EXISTS client_mac VARCHAR(32)",
+            "ALTER TABLE saas_customer_payments ADD COLUMN IF NOT EXISTS client_ip VARCHAR(45)",
+            "ALTER TABLE saas_customer_payments ADD COLUMN IF NOT EXISTS link_login_only VARCHAR(255)",
+            "ALTER TABLE saas_customer_payments ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP WITH TIME ZONE",
+            "ALTER TABLE saas_hotspot_vouchers ADD COLUMN IF NOT EXISTS password VARCHAR(64)",
+            "ALTER TABLE saas_hotspot_vouchers ADD COLUMN IF NOT EXISTS customer_payment_id VARCHAR(36)",
+            "ALTER TABLE saas_hotspot_vouchers ADD COLUMN IF NOT EXISTS router_command_id VARCHAR(36)",
+            "ALTER TABLE saas_router_commands ADD COLUMN IF NOT EXISTS voucher_id VARCHAR(36)",
+            "ALTER TABLE tenant_payment_configs ADD COLUMN IF NOT EXISTS mpesa_callback_token_encrypted TEXT",
+            "ALTER TABLE tenant_payment_configs ADD COLUMN IF NOT EXISTS mpesa_callback_token_hash VARCHAR(64)",
+            "ALTER TABLE tenant_payment_configs ADD COLUMN IF NOT EXISTS previous_callback_token_hash VARCHAR(64)",
+            "CREATE INDEX IF NOT EXISTS ix_saas_customer_payments_package_id ON saas_customer_payments (package_id)",
+            "CREATE INDEX IF NOT EXISTS ix_saas_customer_payments_router_id ON saas_customer_payments (router_id)",
+            "CREATE INDEX IF NOT EXISTS ix_saas_customer_payments_checkout_request_id ON saas_customer_payments (checkout_request_id)",
+            "CREATE INDEX IF NOT EXISTS ix_saas_hotspot_vouchers_customer_payment_id ON saas_hotspot_vouchers (customer_payment_id)",
+        ]
+        with saas_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            conn.execute(text("SET statement_timeout = '10s'"))
+            conn.execute(text("SET lock_timeout = '5s'"))
+            for s in stmts:
+                try:
+                    conn.execute(text(s))
+                    results.append({"stmt": s, "status": "ok"})
+                except Exception as e:
+                    results.append({"stmt": s, "status": "error", "detail": str(e)})
+    else:
+        inspector = inspect(saas_engine)
+        with saas_engine.begin() as conn:
+            for table_name, table in SaasBase.metadata.tables.items():
+                if not inspector.has_table(table_name):
+                    continue
+                db_cols = {c["name"] for c in inspector.get_columns(table_name)}
+                for col in table.columns:
+                    if col.name not in db_cols:
+                        col_type = col.type.compile(saas_engine.dialect)
+                        conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col.name} {col_type}"))
+                        results.append({"table": table_name, "col": col.name, "status": "ok"})
+    return {"status": "completed", "results": results}
 
 # Cookie Session Middleware (Enforces https_only and secure attributes in production)
 is_production = saas_settings.saas_env == "production"
