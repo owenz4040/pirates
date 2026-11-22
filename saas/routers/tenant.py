@@ -2037,12 +2037,14 @@ async def router_sync_endpoint(
             body = await request.json()
         except Exception:
             body = {}
-    else:
+    elif "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
         try:
             form = await request.form()
             body = dict(form)
         except Exception:
             body = {}
+    else:
+        body = {}
 
     router.last_seen_at = datetime.now(timezone.utc)
     router.status = RouterStatus.online

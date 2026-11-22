@@ -205,6 +205,7 @@ def test_stage_dependencies_and_oversized_rejection(client, db_session):
     resp = client.post(
         "/api/router/sync",
         headers={"X-Router-Token": raw_token, "Accept": "application/json"},
+        data={"version": "6.49.18"},
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -232,6 +233,7 @@ def test_stage_dependencies_and_oversized_rejection(client, db_session):
     resp2 = client.post(
         "/api/router/sync",
         headers={"X-Router-Token": raw_token, "Accept": "application/json"},
+        data={"version": "6.49.18"},
     )
     assert resp2.status_code == 200
     data2 = resp2.json()
@@ -253,6 +255,7 @@ def test_stage_dependencies_and_oversized_rejection(client, db_session):
     resp3 = client.post(
         "/api/router/sync",
         headers={"X-Router-Token": raw_token, "Accept": "application/json"},
+        data={"version": "6.49.18"},
     )
     assert resp3.status_code == 200
     data3 = resp3.json()
@@ -302,6 +305,7 @@ def test_oversized_first_command_is_rejected_not_truncated(client, db_session):
     resp = client.post(
         "/api/router/sync",
         headers={"X-Router-Token": raw_token, "Accept": "application/json"},
+        data={"version": "6.49.18"},
     )
     assert resp.status_code == 200
     data = resp.json()
