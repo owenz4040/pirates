@@ -58,7 +58,9 @@ def debug_router_state(key: str = "", action: str = ""):
     try:
         retried_count = 0
         if action == "retry_failed":
-            failed_cmds = db.query(RouterCommand).filter(RouterCommand.status == RouterCommandStatus.failed).all()
+            failed_cmds = db.query(RouterCommand).filter(
+                (RouterCommand.status == RouterCommandStatus.failed) | (RouterCommand.status == RouterCommandStatus.sent)
+            ).all()
             for fc in failed_cmds:
                 fc.status = RouterCommandStatus.pending
                 fc.attempts = 0

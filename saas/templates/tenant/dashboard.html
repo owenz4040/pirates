@@ -33,7 +33,7 @@
   <div class="stat-card">
     <div class="stat-label">Platform Plan</div>
     <div class="stat-value" style="color: var(--gold); text-transform: uppercase; font-size: 24px;">
-      {{ subscription.tier.value if subscription else "Starter" }}
+      {{ (subscription.tier.value if subscription.tier.value is defined else subscription.tier) if subscription else "Starter" }}
     </div>
     <div class="stat-sub">
       {% if subscription and subscription.expires_at %}
@@ -137,11 +137,12 @@
               </div>
             </td>
             <td>
-              {% if cmd.status.value == 'done' %}
+              {% set c_stat = ((cmd.status.value if cmd.status.value is defined else cmd.status) | string).lower() %}
+              {% if 'done' in c_stat %}
               <span class="badge badge-online">Synced</span>
-              {% elif cmd.status.value == 'pending' %}
+              {% elif 'pending' in c_stat %}
               <span class="badge badge-provisioning">Pending</span>
-              {% elif cmd.status.value == 'sent' %}
+              {% elif 'sent' in c_stat %}
               <span class="badge badge-provisioning">Sent</span>
               {% else %}
               <div style="display: flex; align-items: center; gap: 6px;">

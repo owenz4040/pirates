@@ -626,7 +626,7 @@ def tenant_routers_add(
     db.commit()
     db.refresh(new_router)
 
-    base_url = str(request.base_url).rstrip("/")
+    base_url = get_effective_base_url(request)
     sync_url = f"{base_url}/api/router/sync"
     mikrotik_script = _build_mikrotik_setup_script(sync_url, raw_token, new_router.name)
 
@@ -717,7 +717,7 @@ def tenant_router_rotate_token(
     router.token_hash = hash_token(raw_token)
     db.commit()
 
-    base_url = str(request.base_url).rstrip("/")
+    base_url = get_effective_base_url(request)
     sync_url = f"{base_url}/api/router/sync"
     new_script = _build_mikrotik_setup_script(sync_url, raw_token, router.name)
 
@@ -789,7 +789,7 @@ def tenant_router_download_rsc(
         router.token_hash = hash_token(raw_token)
         db.commit()
 
-    base_url = str(request.base_url).rstrip("/")
+    base_url = get_effective_base_url(request)
     sync_url = f"{base_url}/api/router/sync"
     rsc_content = build_mikrotik_rsc_file(sync_url, raw_token, router.name)
     safe_filename = re.sub(r"[^a-zA-Z0-9_\-]", "_", router.name)
@@ -1921,10 +1921,28 @@ def tenant_settings_password_save(
 # Router Outbound Synchronization API (RAM-only execution)
 # =====================================================================
 
+def get_effective_base_url(request: Request) -> str:
+    """Returns absolute base URL enforcing HTTPS on Vercel/production."""
+    if os.environ.get("VERCEL"):
+        proto = request.headers.get("x-forwarded-proto", "https")
+        host = request.headers.get("x-forwarded-host") or request.headers.get("host") or "cowen.vercel.app"
+        return f"{proto}://{host}".rstrip("/")
+    base = str(request.base_url).rstrip("/")
+    if saas_settings.saas_env == "production" or "vercel.app" in base:
+        return saas_settings.effective_public_base_url.rstrip("/")
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return f"{proto}://{host}".rstrip("/")
+
+
 def render_router_batch(batch: list[RouterCommand], ack_url: str, raw_token: str) -> str:
     """Renders a batch of RouterOS commands with magic verification header, per-command error handling and ack callback."""
     if not batch:
         return ""
+
+    # Always enforce HTTPS for non-local endpoints to prevent RouterOS /tool fetch 308 redirect failures
+    if "localhost" not in ack_url and "127.0.0.1" not in ack_url and ack_url.startswith("http://"):
+        ack_url = ack_url.replace("http://", "https://", 1)
 
     lines = ["# COwen-Batch-OK", ':local ok ""', ':local failed ""']
     for cmd in batch:
@@ -1942,11 +1960,7 @@ def render_router_batch(batch: list[RouterCommand], ack_url: str, raw_token: str
 
     lines.append(
         f":local ackData (\"ok=\" . $ok . \"&failed=\" . $failed);\n"
-        f":do {{/tool fetch url={q_ack_url} http-method=post "
-        f"http-header-field={q_ack_header} "
-        f"http-data=$ackData check-certificate=yes-without-crl output=none;\n"
-        f":log info \"COwen_Sync: batch commands executed and acknowledged\";}} "
-        f"on-error={{:log warning \"COwen_Sync: could not report results\"}}"
+        f":do {{ /tool fetch url={q_ack_url} http-method=post http-header-field={q_ack_header} http-data=$ackData check-certificate=yes-without-crl output=none; :log info \"COwen_Sync: batch commands executed and acknowledged\"; }} on-error={{ :log warning \"COwen_Sync: could not report results\" }};"
     )
     return "\n".join(lines) + "\n"
 
@@ -2086,7 +2100,7 @@ async def router_sync_endpoint(
             ],
         }
 
-    base_url = str(request.base_url).rstrip("/")
+    base_url = get_effective_base_url(request)
     ack_url = f"{base_url}/api/router/ack"
     script_text = render_router_batch(batch, ack_url, x_router_token.strip())
     return PlainTextResponse(content=script_text, media_type="text/plain")
