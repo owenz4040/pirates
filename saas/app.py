@@ -57,7 +57,95 @@ def debug_router_state(key: str = "", action: str = ""):
     db = SaasSessionLocal()
     try:
         retried_count = 0
-        if action == "retry_failed":
+        if action == "queue_staged_hotspot":
+            from saas.security.sanitizer import (
+                build_hotspot_bridge_command,
+                build_hotspot_wireless_command,
+                build_hotspot_ip_dhcp_dns_command,
+                build_hotspot_server_setup_command,
+                build_hotspot_profile_command,
+            )
+            net = db.query(HotspotNetwork).first()
+            if net:
+                r_dev = db.query(Router).filter_by(id=net.router_id).first()
+                is_ros7 = bool(r_dev and r_dev.version and r_dev.version.startswith("7"))
+
+                # 1. Profile command
+                prof_cmd = db.query(RouterCommand).filter(
+                    RouterCommand.router_id == net.router_id,
+                    RouterCommand.description.like("%Provision Hotspot profile: isp-5mbps%"),
+                ).first()
+                if prof_cmd:
+                    prof_cmd.status = RouterCommandStatus.pending
+                    prof_cmd.attempts = 0
+                    prof_cmd.sent_at = None
+                    prof_cmd.finished_at = None
+                    retried_count += 1
+                else:
+                    prof_script = build_hotspot_profile_command("isp-5mbps", "5M/10M")
+                    db.add(RouterCommand(
+                        tenant_id=net.tenant_id,
+                        router_id=net.router_id,
+                        description="Provision Hotspot profile: isp-5mbps",
+                        script=prof_script,
+                        status=RouterCommandStatus.pending,
+                    ))
+                    retried_count += 1
+
+                # 2. Four distinct stages (< 800 bytes each)
+                s1 = build_hotspot_bridge_command(
+                    bridge_name=net.bridge_name,
+                    ethernet_ports=[],
+                    include_wlan=net.include_wlan,
+                    wlan_iface=net.wlan_interface or "wlan1",
+                )
+                s2 = build_hotspot_wireless_command(
+                    ssid=net.ssid,
+                    security_mode=net.wifi_security or "open",
+                    password=None,
+                    wlan_iface=net.wlan_interface or "wlan1",
+                    is_ros7=is_ros7,
+                )
+                gw_parts = net.gateway_ip.strip().split(".")
+                net_cidr = f"{gw_parts[0]}.{gw_parts[1]}.{gw_parts[2]}.0/24" if len(gw_parts) == 4 else "10.5.50.0/24"
+                s3 = build_hotspot_ip_dhcp_dns_command(
+                    bridge_name=net.bridge_name,
+                    gateway_ip=net.gateway_ip,
+                    network_cidr=net_cidr,
+                    pool_start=net.dhcp_pool_start,
+                    pool_end=net.dhcp_pool_end,
+                    dns_servers=f"{net.gateway_ip},8.8.8.8,1.1.1.1",
+                )
+                s4 = build_hotspot_server_setup_command(
+                    server_name=f"{net.bridge_name}-Server",
+                    server_profile_name=f"{net.bridge_name}-Profile",
+                    bridge_name=net.bridge_name,
+                    pool_name="COwen-Hotspot-Pool",
+                    dns_name=net.dns_name,
+                    gateway_ip=net.gateway_ip,
+                    network_cidr=net_cidr,
+                    html_dir="hotspot",
+                    login_by="http-chap,cookie",
+                )
+
+                staged = [
+                    ("Hotspot Stage 1/4: Bridge & Ports", s1),
+                    ("Hotspot Stage 2/4: Wireless AP", s2),
+                    ("Hotspot Stage 3/4: IP Gateway & DHCP", s3),
+                    ("Hotspot Stage 4/4: Hotspot Server & NAT", s4),
+                ]
+                for s_title, s_code in staged:
+                    db.add(RouterCommand(
+                        tenant_id=net.tenant_id,
+                        router_id=net.router_id,
+                        description=f"{s_title} ('{net.ssid}')",
+                        script=s_code,
+                        status=RouterCommandStatus.pending,
+                    ))
+                    retried_count += 1
+                net.status = "queued"
+                db.commit()
+        elif action == "retry_failed":
             failed_cmds = db.query(RouterCommand).filter(
                 (RouterCommand.status == RouterCommandStatus.failed) | (RouterCommand.status == RouterCommandStatus.sent)
             ).all()
