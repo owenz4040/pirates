@@ -5,6 +5,7 @@ Strict allowlists are enforced; invalid characters are rejected rather than sani
 """
 from __future__ import annotations
 
+import hashlib
 import re
 
 # Strict validation regexes
@@ -394,6 +395,7 @@ def build_hotspot_server_setup_command(
     gateway_ip: str = "10.5.50.1",
     network_cidr: str = "10.5.50.0/24",
     html_dir: str = "hotspot",
+    login_by: str = "http-chap,cookie",
 ) -> str:
     """Generates RouterOS commands to configure Hotspot server, profile, and NAT masquerade."""
     q_srv = quote_routeros(server_name.strip())
@@ -404,10 +406,11 @@ def build_hotspot_server_setup_command(
     q_gw = quote_routeros(gateway_ip.strip())
     q_html = quote_routeros(html_dir.strip())
     q_cidr = quote_routeros(network_cidr.strip())
+    clean_login_by = quote_routeros(login_by.strip()).strip('"')
 
     lines = [
         f":if ([:len [/ip hotspot profile find where name={q_prof}]] = 0) do={{"
-        f"/ip hotspot profile add name={q_prof} hotspot-address={q_gw} dns-name={q_dns_name} html-directory={q_html} login-by=http-chap,http-pap,cookie use-radius=no comment=\"COwen Hotspot Profile\""
+        f"/ip hotspot profile add name={q_prof} hotspot-address={q_gw} dns-name={q_dns_name} html-directory={q_html} login-by={clean_login_by} use-radius=no comment=\"COwen Hotspot Profile\""
         f"}} else={{"
         f"/ip hotspot profile set [find where name={q_prof}] hotspot-address={q_gw} dns-name={q_dns_name} html-directory={q_html}"
         f"}}",
@@ -714,6 +717,7 @@ def build_hotspot_server_setup_command(
     gateway_ip: str = "10.5.50.1",
     network_cidr: str = "10.5.50.0/24",
     html_dir: str = "hotspot",
+    login_by: str = "http-chap,cookie",
 ) -> str:
     """Generates RouterOS commands to configure Hotspot server, profile, and NAT masquerade."""
     q_srv = quote_routeros(server_name.strip())
@@ -724,10 +728,11 @@ def build_hotspot_server_setup_command(
     q_gw = quote_routeros(gateway_ip.strip())
     q_html = quote_routeros(html_dir.strip())
     q_cidr = quote_routeros(network_cidr.strip())
+    clean_login_by = quote_routeros(login_by.strip()).strip('"')
 
     lines = [
         f":if ([:len [/ip hotspot profile find where name={q_prof}]] = 0) do={{"
-        f"/ip hotspot profile add name={q_prof} hotspot-address={q_gw} dns-name={q_dns_name} html-directory={q_html} login-by=http-chap,http-pap,cookie use-radius=no comment=\"COwen Hotspot Profile\""
+        f"/ip hotspot profile add name={q_prof} hotspot-address={q_gw} dns-name={q_dns_name} html-directory={q_html} login-by={clean_login_by} use-radius=no comment=\"COwen Hotspot Profile\""
         f"}} else={{"
         f"/ip hotspot profile set [find where name={q_prof}] hotspot-address={q_gw} dns-name={q_dns_name} html-directory={q_html}"
         f"}}",
@@ -1030,6 +1035,7 @@ def build_hotspot_server_setup_command(
     gateway_ip: str = "10.5.50.1",
     network_cidr: str = "10.5.50.0/24",
     html_dir: str = "hotspot",
+    login_by: str = "http-chap,cookie",
 ) -> str:
     """Generates RouterOS commands to configure Hotspot server, profile, and NAT masquerade."""
     q_srv = quote_routeros(server_name.strip())
@@ -1040,10 +1046,11 @@ def build_hotspot_server_setup_command(
     q_gw = quote_routeros(gateway_ip.strip())
     q_html = quote_routeros(html_dir.strip())
     q_cidr = quote_routeros(network_cidr.strip())
+    clean_login_by = quote_routeros(login_by.strip()).strip('"')
 
     lines = [
         f":if ([:len [/ip hotspot profile find where name={q_prof}]] = 0) do={{"
-        f"/ip hotspot profile add name={q_prof} hotspot-address={q_gw} dns-name={q_dns_name} html-directory={q_html} login-by=http-chap,http-pap,cookie use-radius=no comment=\"COwen Hotspot Profile\""
+        f"/ip hotspot profile add name={q_prof} hotspot-address={q_gw} dns-name={q_dns_name} html-directory={q_html} login-by={clean_login_by} use-radius=no comment=\"COwen Hotspot Profile\""
         f"}} else={{"
         f"/ip hotspot profile set [find where name={q_prof}] hotspot-address={q_gw} dns-name={q_dns_name} html-directory={q_html}"
         f"}}",
@@ -1216,12 +1223,131 @@ def build_mikrotik_terminal_commands(
     )
 
 
+def calculate_routeros_chap_response(
+    chap_id: int | str | bytes,
+    password: str,
+    chap_challenge: str | bytes,
+) -> str:
+    """Calculate the RouterOS-compatible CHAP challenge-response string.
+
+    Formula: MD5(chap-id + password + chap-challenge)
+    Returns 32-character lowercase hex digest matching RouterOS hotspot authentication.
+    """
+    if isinstance(chap_id, int):
+        chap_id_bytes = bytes([chap_id])
+    elif isinstance(chap_id, bytes):
+        chap_id_bytes = chap_id
+    elif isinstance(chap_id, str):
+        if chap_id.startswith("\\") and len(chap_id) > 1 and chap_id[1:].isdigit():
+            chap_id_bytes = bytes([int(chap_id[1:], 8)])
+        else:
+            chap_id_bytes = chap_id.encode("latin-1")
+    else:
+        raise ValueError("Invalid chap_id type")
+
+    pass_bytes = password.encode("utf-8")
+
+    if isinstance(chap_challenge, bytes):
+        chal_bytes = chap_challenge
+    elif isinstance(chap_challenge, str):
+        chal_bytes = chap_challenge.encode("utf-8")
+    else:
+        raise ValueError("Invalid chap_challenge type")
+
+    return hashlib.md5(chap_id_bytes + pass_bytes + chal_bytes).hexdigest()
+
+
+MD5_JS_SOURCE = """// RFC 1321 MD5 message digest implementation for RouterOS CHAP hotspot authentication
+(function(global) {
+  function add(x, y) {
+    var l = (x & 0xffff) + (y & 0xffff);
+    var m = (x >> 16) + (y >> 16) + (l >> 16);
+    return (m << 16) | (l & 0xffff);
+  }
+  function rol(v, s) { return (v << s) | (v >>> (32 - s)); }
+  function cmn(q, a, b, x, s, t) { return add(rol(add(add(a, q), add(x, t)), s), b); }
+  function ff(a, b, c, d, x, s, t) { return cmn((b & c) | (~b & d), a, b, x, s, t); }
+  function gg(a, b, c, d, x, s, t) { return cmn((b & d) | (c & ~d), a, b, x, s, t); }
+  function hh(a, b, c, d, x, s, t) { return cmn(b ^ c ^ d, a, b, x, s, t); }
+  function ii(a, b, c, d, x, s, t) { return cmn(c ^ (b | ~d), a, b, x, s, t); }
+
+  function hexMD5(str) {
+    var n = str.length;
+    var words = [];
+    for (var i = 0; i < n; i++) {
+      words[i >> 2] |= (str.charCodeAt(i) & 0xff) << ((i % 4) * 8);
+    }
+    words[n >> 2] |= 0x80 << ((n % 4) * 8);
+    words[(((n + 8) >> 6) << 4) + 14] = n * 8;
+
+    var a = 0x67452301, b = 0xefcdab89, c = 0x98badcfe, d = 0x10325476;
+    for (var j = 0; j < words.length; j += 16) {
+      var aa = a, bb = b, cc = c, dd = d;
+      var w = words.slice(j, j + 16);
+      while (w.length < 16) w.push(0);
+
+      a = ff(a, b, c, d, w[0], 7, 0xd76aa478); d = ff(d, a, b, c, w[1], 12, 0xe8c7b756);
+      c = ff(c, d, a, b, w[2], 17, 0x242070db); b = ff(b, c, d, a, w[3], 22, 0xc1bdceee);
+      a = ff(a, b, c, d, w[4], 7, 0xf57c0faf); d = ff(d, a, b, c, w[5], 12, 0x4787c62a);
+      c = ff(c, d, a, b, w[6], 17, 0xa8304613); b = ff(b, c, d, a, w[7], 22, 0xfd469501);
+      a = ff(a, b, c, d, w[8], 7, 0x698098d8); d = ff(d, a, b, c, w[9], 12, 0x8b44f7af);
+      c = ff(c, d, a, b, w[10], 17, 0xffff5bb1); b = ff(b, c, d, a, w[11], 22, 0x895cd7be);
+      a = ff(a, b, c, d, w[12], 7, 0x6b901122); d = ff(d, a, b, c, w[13], 12, 0xfd987193);
+      c = ff(c, d, a, b, w[14], 17, 0xa679438e); b = ff(b, c, d, a, w[15], 22, 0x49b40821);
+
+      a = gg(a, b, c, d, w[1], 5, 0xf61e2562); d = gg(d, a, b, c, w[6], 9, 0xc040b340);
+      c = gg(c, d, a, b, w[11], 14, 0x265e5a51); b = gg(b, c, d, a, w[0], 20, 0xe9b6c7aa);
+      a = gg(a, b, c, d, w[5], 5, 0xd62f105d); d = gg(d, a, b, c, w[10], 9, 0x02441453);
+      c = gg(c, d, a, b, w[15], 14, 0xd8a1e681); b = gg(b, c, d, a, w[4], 20, 0xe7d3fbc8);
+      a = gg(a, b, c, d, w[9], 5, 0x21e1cde6); d = gg(d, a, b, c, w[14], 9, 0xc33707d6);
+      c = gg(c, d, a, b, w[3], 14, 0xf4d50d87); b = gg(b, c, d, a, w[8], 20, 0x455a14ed);
+      a = gg(a, b, c, d, w[13], 5, 0xa9e3e905); d = gg(d, a, b, c, w[2], 9, 0xfcefa3f8);
+      c = gg(c, d, a, b, w[7], 14, 0x676f02d9); b = gg(b, c, d, a, w[12], 20, 0x8d2a4c8a);
+
+      a = hh(a, b, c, d, w[5], 4, 0xfffa3942); d = hh(d, a, b, c, w[8], 11, 0x8771f681);
+      c = hh(c, d, a, b, w[11], 16, 0x6d9d6122); b = hh(b, c, d, a, w[14], 23, 0xfde5380c);
+      a = hh(a, b, c, d, w[1], 4, 0xa4beea44); d = hh(d, a, b, c, w[4], 11, 0x4bdecfa9);
+      c = hh(c, d, a, b, w[7], 16, 0xf6bb4b60); b = hh(b, c, d, a, w[10], 23, 0xbebfbc70);
+      a = hh(a, b, c, d, w[13], 4, 0x289b7ec6); d = hh(d, a, b, c, w[0], 11, 0xeaa127fa);
+      c = hh(c, d, a, b, w[3], 16, 0xd4ef3085); b = hh(b, c, d, a, w[6], 23, 0x04881d05);
+      a = hh(a, b, c, d, w[9], 4, 0xd9d4d039); d = hh(d, a, b, c, w[12], 11, 0xe6db99e5);
+      c = hh(c, d, a, b, w[15], 16, 0x1fa27cf8); b = hh(b, c, d, a, w[2], 23, 0xc4ac5665);
+
+      a = ii(a, b, c, d, w[0], 6, 0xf4292244); d = ii(d, a, b, c, w[7], 10, 0x432aff97);
+      c = ii(c, d, a, b, w[14], 15, 0xab9423a7); b = ii(b, c, d, a, w[5], 21, 0xfc93a039);
+      a = ii(a, b, c, d, w[12], 6, 0x655b59c3); d = ii(d, a, b, c, w[3], 10, 0x8f0ccc92);
+      c = ii(c, d, a, b, w[10], 15, 0xffeff47d); b = ii(b, c, d, a, w[1], 21, 0x85845dd1);
+      a = ii(a, b, c, d, w[8], 6, 0x6fa87e4f); d = ii(d, a, b, c, w[15], 10, 0xfe2ce6e0);
+      c = ii(c, d, a, b, w[6], 15, 0xa3014314); b = ii(b, c, d, a, w[13], 21, 0x4e0811a1);
+      a = ii(a, b, c, d, w[4], 6, 0xf7537e82); d = ii(d, a, b, c, w[11], 10, 0xbd3af235);
+      c = ii(c, d, a, b, w[2], 15, 0x2ad7d2bb); b = ii(b, c, d, a, w[9], 21, 0xeb86d391);
+
+      a = add(a, aa); b = add(b, bb); c = add(c, cc); d = add(d, dd);
+    }
+
+    function toHex(v) {
+      var s = '';
+      for (var k = 0; k < 4; k++) {
+        var b = (v >> (k * 8)) & 0xff;
+        var h = b.toString(16);
+        s += (h.length < 2 ? '0' : '') + h;
+      }
+      return s;
+    }
+    return toHex(a) + toHex(b) + toHex(c) + toHex(d);
+  }
+
+  global.hexMD5 = hexMD5;
+})(typeof window !== 'undefined' ? window : this);
+"""
+
+
 def generate_routeros_captive_portal_templates(
     portal_base_url: str = "https://cowen.vercel.app/portal",
     tenant_slug: str = "default",
     brand_name: str = "COwen WiFi",
 ) -> dict[str, str]:
-    """Generates RouterOS captive portal HTML files (login.html, alogin.html, status.html)."""
+    """Generates RouterOS captive portal HTML files (login.html, alogin.html, status.html, md5.js)."""
     clean_slug = quote_routeros(tenant_slug).strip('"')
     clean_brand = quote_routeros(brand_name).strip('"')
 
@@ -1255,11 +1381,73 @@ def generate_routeros_captive_portal_templates(
 
     <div style="margin-top: 30px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px; text-align: left;">
       <div style="font-size: 12px; color: #949EB5; margin-bottom: 8px;">Already have an Access Voucher?</div>
-      <form name="login" action="$(link-login-only)" method="post">
+
+      $(if chap-id)
+      <!-- Hidden form used to submit secure challenge response when CHAP is requested -->
+      <form name="sendin" action="$(link-login-only)" method="post" style="display:none">
+        <input type="hidden" name="username" />
+        <input type="hidden" name="password" />
+        <input type="hidden" name="dst" value="$(link-orig)" />
+        <input type="hidden" name="popup" value="true" />
+      </form>
+      <script type="text/javascript" src="/md5.js"></script>
+      <script type="text/javascript">
+        // Embedded RFC 1321 MD5 fallback to guarantee offline operation without external dependencies
+        if (typeof hexMD5 !== 'function') {{
+          {MD5_JS_SOURCE}
+        }}
+
+        function doLogin() {{
+          var userField = document.login.username;
+          var passField = document.login.password;
+          var userVal = (userField ? userField.value : '').trim();
+          var passVal = (passField ? passField.value : userVal).trim();
+
+          if (!userVal) {{
+            alert('Please enter your voucher code');
+            return false;
+          }}
+
+          var chapId = '$(chap-id)';
+          var chapChallenge = '$(chap-challenge)';
+
+          // Strictly verify CHAP variables were expanded by RouterOS
+          if (!chapId || !chapChallenge || chapId === '$(chap-id)' || chapChallenge === '$(chap-challenge)') {{
+            var errEl = document.getElementById('chapError');
+            if (errEl) {{
+              errEl.textContent = 'Router CHAP challenge missing. Cannot authenticate securely.';
+              errEl.style.display = 'block';
+            }} else {{
+              alert('Router CHAP challenge missing. Authentication halted.');
+            }}
+            return false; // NEVER silently fall back to plaintext!
+          }}
+
+          if (typeof hexMD5 !== 'function') {{
+            var errEl = document.getElementById('chapError');
+            if (errEl) {{
+              errEl.textContent = 'MD5 hashing library unavailable. Authentication halted.';
+              errEl.style.display = 'block';
+            }} else {{
+              alert('MD5 hashing library unavailable. Authentication halted.');
+            }}
+            return false; // NEVER silently fall back to plaintext!
+          }}
+
+          document.sendin.username.value = userVal;
+          document.sendin.password.value = hexMD5(chapId + passVal + chapChallenge);
+          document.sendin.submit();
+          return false;
+        }}
+      </script>
+      $(endif)
+
+      <form name="login" action="$(link-login-only)" method="post" $(if chap-id) onSubmit="return doLogin()" $(endif)>
         <input type="hidden" name="dst" value="$(link-orig)">
         <input type="text" name="username" class="input" placeholder="Enter Voucher Code" value="$(username)" required>
         <input type="hidden" name="password" value="$(username)">
         <button type="submit" class="btn" style="background: rgba(255,255,255,0.1); color: #fff;">Connect Voucher</button>
+        <div id="chapError" class="error" style="display:none; margin-top:10px;"></div>
       </form>
     </div>
   </div>
@@ -1343,5 +1531,6 @@ def generate_routeros_captive_portal_templates(
         "login.html": login_html,
         "alogin.html": alogin_html,
         "status.html": status_html,
+        "md5.js": MD5_JS_SOURCE.strip(),
     }
 

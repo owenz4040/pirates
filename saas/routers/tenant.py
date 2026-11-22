@@ -1327,8 +1327,9 @@ def tenant_hotspot_template_download(
     )
     if filename not in templates_dict:
         raise HTTPException(status_code=404, detail="Template file not found.")
+    media_type = "application/javascript" if filename.endswith(".js") else "text/html"
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
-    return Response(content=templates_dict[filename], media_type="text/html", headers=headers)
+    return Response(content=templates_dict[filename], media_type=media_type, headers=headers)
 
 
 @tenant_router.post("/tenant/hotspot/vouchers/generate", dependencies=[Depends(verify_csrf_token)])

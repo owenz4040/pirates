@@ -1,6 +1,7 @@
 """Customer-facing Hotspot Captive Portal, purchase flows, and tenant payment webhooks."""
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import urllib.parse
@@ -46,16 +47,37 @@ class PurchaseRequest(BaseModel):
     link_login_only: str | None = None
 
 
-def validate_captive_login_url(url_str: str | None, network: HotspotNetwork | None, router: Router | None = None) -> str | None:
+# Dangerous management and network ports that must NEVER be accepted as captive portal login URLs
+FORBIDDEN_PORTS = {
+    21,    # FTP
+    22,    # SSH
+    23,    # Telnet
+    25,    # SMTP
+    53,    # DNS
+    161,   # SNMP
+    8291,  # MikroTik WinBox (CRITICAL MANAGEMENT PORT)
+    8728,  # MikroTik RouterOS API
+    8729,  # MikroTik RouterOS API-SSL
+}
+
+
+def validate_captive_login_url(
+    url_str: str | None,
+    network: HotspotNetwork | None,
+    router: Router | None = None,
+    allowed_ports: set[int] | list[int] | None = None,
+) -> str | None:
     """Strictly validates captive portal login URL against the selected HotspotNetwork configuration.
 
     Guarantees:
     - Parses URL using urllib.parse.
+    - Explicitly validates parsed.port and rejects unexpected, forbidden, or malformed ports.
+    - Derives permitted ports from the selected HotspotNetwork and its actual configured login endpoint.
     - Rejects credentials embedded in URL (user:pass).
     - Rejects fragments (#).
-    - Rejects external hosts, arbitrary domains, and unlisted subnets.
+    - Rejects external hosts, arbitrary domains, and unexpected IP representations (octal, hex, decimal int).
     - Destination hostname MUST match HotspotNetwork.gateway_ip, HotspotNetwork.dns_name, or router.ip_address.
-    - Path must be standard RouterOS login path (/login or /login/).
+    - Path must be standard RouterOS login path (/login or /login/ or "").
     - Returns None if invalid or untrusted.
     """
     if not url_str or not isinstance(url_str, str):
@@ -63,6 +85,8 @@ def validate_captive_login_url(url_str: str | None, network: HotspotNetwork | No
     url_clean = url_str.strip()
     try:
         parsed = urllib.parse.urlparse(url_clean)
+        # Accessing parsed.port can raise ValueError on malformed ports (e.g. :abc or out of range)
+        raw_port = parsed.port
     except Exception:
         return None
 
@@ -72,10 +96,23 @@ def validate_captive_login_url(url_str: str | None, network: HotspotNetwork | No
         return None
     if parsed.fragment:
         return None
+    # Reject credentials or invalid authority characters in netloc
+    if "@" in parsed.netloc:
+        return None
 
     hostname = (parsed.hostname or "").lower().strip()
     if not hostname:
         return None
+
+    # Strict IP representation validation (blocks octal 012.005.050.001, decimal integers, hex IPs, etc.)
+    try:
+        ip_obj = ipaddress.ip_address(hostname)
+        if str(ip_obj) != hostname:
+            return None
+    except ValueError:
+        # Not an IP address, must be a standard hostname/domain
+        if any(c in hostname for c in "/\\ :?#@[]"):
+            return None
 
     allowed_destinations = set()
     if network:
@@ -87,6 +124,25 @@ def validate_captive_login_url(url_str: str | None, network: HotspotNetwork | No
         allowed_destinations.add(router.ip_address.lower().strip())
 
     if not allowed_destinations or hostname not in allowed_destinations:
+        return None
+
+    # Dangerous management ports (WinBox 8291, SSH 22, API 8728/8729) are strictly forbidden
+    if raw_port in FORBIDDEN_PORTS:
+        return None
+
+    # Determine permitted ports derived from network or standard defaults
+    if allowed_ports is not None:
+        permitted_ports = set(allowed_ports)
+    else:
+        permitted_ports = {80} if parsed.scheme == "http" else {443}
+        if network:
+            if hasattr(network, "allowed_ports") and network.allowed_ports:
+                permitted_ports.update(network.allowed_ports)
+            if hasattr(network, "login_port") and network.login_port:
+                permitted_ports.add(network.login_port)
+
+    effective_port = raw_port if raw_port is not None else (80 if parsed.scheme == "http" else 443)
+    if effective_port not in permitted_ports:
         return None
 
     clean_path = parsed.path.rstrip("/")

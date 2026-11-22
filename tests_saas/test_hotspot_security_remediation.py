@@ -481,3 +481,163 @@ def test_captive_login_url_validation():
     # Malicious protocols
     assert validate_captive_login_url("javascript:alert(1)", network) is None
     assert validate_captive_login_url("file:///etc/passwd", network) is None
+
+
+def test_captive_login_url_port_validation():
+    """Hardened port validation tests for validate_captive_login_url."""
+    network = HotspotNetwork(
+        router_id="r1",
+        name="Net",
+        gateway_ip="10.5.50.1",
+        dns_name="login.hotspot",
+    )
+
+    # 1. Expected HTTP port (80)
+    assert validate_captive_login_url("http://10.5.50.1:80/login", network) == "http://10.5.50.1:80/login"
+
+    # 2. Expected HTTPS port (443)
+    assert validate_captive_login_url("https://login.hotspot:443/login", network) == "https://login.hotspot:443/login"
+
+    # 3. Port 8080: rejected by default, accepted if explicitly permitted for that network
+    assert validate_captive_login_url("http://10.5.50.1:8080/login", network) is None
+    assert validate_captive_login_url("http://10.5.50.1:8080/login", network, allowed_ports={80, 8080}) == "http://10.5.50.1:8080/login"
+
+    # 4. Port 8291: MikroTik WinBox management port MUST ALWAYS be rejected!
+    assert validate_captive_login_url("http://10.5.50.1:8291/login", network) is None
+    assert validate_captive_login_url("http://10.5.50.1:8291/login", network, allowed_ports={8291}) is None
+
+    # 5. Dangerous management ports (SSH 22, Telnet 23, API 8728/8729)
+    assert validate_captive_login_url("http://10.5.50.1:22/login", network) is None
+    assert validate_captive_login_url("http://10.5.50.1:8728/login", network) is None
+
+    # 6. Malformed port
+    assert validate_captive_login_url("http://10.5.50.1:abc/login", network) is None
+    assert validate_captive_login_url("http://10.5.50.1:-1/login", network) is None
+    assert validate_captive_login_url("http://10.5.50.1:999999/login", network) is None
+
+    # 7. Missing port (defaults to 80 for HTTP, 443 for HTTPS)
+    assert validate_captive_login_url("http://10.5.50.1/login", network) == "http://10.5.50.1/login"
+    assert validate_captive_login_url("https://login.hotspot/login", network) == "https://login.hotspot/login"
+
+    # 8. Wrong hostname / Suffix tricks
+    assert validate_captive_login_url("http://10.5.50.1.attacker.com/login", network) is None
+    assert validate_captive_login_url("http://login.hotspot.evil.org/login", network) is None
+    assert validate_captive_login_url("http://192.168.88.1/login", network) is None
+
+    # 9. Wrong login path
+    assert validate_captive_login_url("http://10.5.50.1/admin", network) is None
+    assert validate_captive_login_url("http://10.5.50.1/setup", network) is None
+
+    # 10. Embedded credentials in authority
+    assert validate_captive_login_url("http://admin:pass@10.5.50.1/login", network) is None
+    assert validate_captive_login_url("http://user@10.5.50.1/login", network) is None
+
+    # 11. URL fragment
+    assert validate_captive_login_url("http://10.5.50.1/login#frag", network) is None
+
+    # 12. Unexpected IP representations (octal, decimal integer)
+    assert validate_captive_login_url("http://012.005.050.001/login", network) is None
+    assert validate_captive_login_url("http://168112641/login", network) is None
+
+
+# =====================================================================
+# 5. RouterOS Genuine CHAP Challenge-Response Tests
+# =====================================================================
+
+def test_routeros_chap_response_calculation():
+    """Verify RouterOS-compatible CHAP calculation: MD5(chap_id + password + chap_challenge)."""
+    from saas.security.sanitizer import calculate_routeros_chap_response
+
+    # Test Vector A: string chap_id "\x01" (or octal "\\001")
+    chap_id = "\\001"
+    password = "secretpassword"
+    challenge = "0123456789abcdef0123456789abcdef"
+
+    # Expected: hashlib.md5(b"\x01" + b"secretpassword" + b"0123456789abcdef0123456789abcdef").hexdigest()
+    expected_hash = hashlib.md5(b"\x01" + password.encode("utf-8") + challenge.encode("utf-8")).hexdigest()
+    calc_hash = calculate_routeros_chap_response(chap_id, password, challenge)
+    assert calc_hash == expected_hash
+
+    # Test Vector B: integer chap_id (1) produces identical result
+    assert calculate_routeros_chap_response(1, password, challenge) == expected_hash
+
+    # Test Vector C: Incorrect challenge produces different hash
+    wrong_chal_hash = calculate_routeros_chap_response(1, password, "wrong_challenge_123")
+    assert wrong_chal_hash != expected_hash
+
+    # Test Vector D: Incorrect password/voucher code produces different hash
+    wrong_pass_hash = calculate_routeros_chap_response(1, "wrongpassword", challenge)
+    assert wrong_pass_hash != expected_hash
+
+
+def test_routeros_chap_template_generation_and_offline_md5():
+    """Verify generated RouterOS templates implement CHAP challenge-response and provide offline md5.js."""
+    from saas.security.sanitizer import generate_routeros_captive_portal_templates
+
+    templates = generate_routeros_captive_portal_templates(
+        portal_base_url="https://cowen.vercel.app/portal",
+        tenant_slug="alpha-isp",
+        brand_name="Alpha WiFi",
+    )
+
+    # 1. Templates dictionary contains all required files
+    assert "login.html" in templates
+    assert "alogin.html" in templates
+    assert "status.html" in templates
+    assert "md5.js" in templates
+
+    login_html = templates["login.html"]
+    md5_js = templates["md5.js"]
+
+    # 2. login.html contains RouterOS CHAP elements
+    assert "$(if chap-id)" in login_html
+    assert 'name="sendin"' in login_html
+    assert "$(chap-id)" in login_html
+    assert "$(chap-challenge)" in login_html
+    assert "hexMD5(chapId + passVal + chapChallenge)" in login_html
+    assert 'onSubmit="return doLogin()"' in login_html
+
+    # 3. Strict safety: Never silently fall back to plaintext password when CHAP is requested
+    assert "Router CHAP challenge missing. Cannot authenticate securely." in login_html
+    assert "NEVER silently fall back to plaintext!" in login_html
+
+    # 4. Embedded offline MD5 fallback exists within login.html
+    assert "typeof hexMD5 !== 'function'" in login_html
+    assert "hexMD5" in login_html
+
+    # 5. md5.js is clean, valid JavaScript defining hexMD5
+    assert "hexMD5" in md5_js
+    assert "0x67452301" in md5_js  # RFC 1321 initialization vector
+
+
+def test_routeros_chap_vs_pap_simulation():
+    """Simulate RouterOS server-side evaluation of CHAP vs PAP authentication."""
+    from saas.security.sanitizer import calculate_routeros_chap_response
+
+    voucher_code = "ALPHA-VOUCH-99"
+    stored_password = voucher_code  # Vouchers use code as password
+
+    # Case 1: RouterOS with CHAP enabled
+    session_chap_id = 4
+    session_challenge = "f8a9b2c3d4e5f60718293a4b5c6d7e8f"
+
+    # Client calculates response using challenge
+    client_response = calculate_routeros_chap_response(session_chap_id, voucher_code, session_challenge)
+
+    # RouterOS verifies by performing identical hash
+    router_expected = calculate_routeros_chap_response(session_chap_id, stored_password, session_challenge)
+    assert client_response == router_expected
+
+    # If client attempts to send plaintext to CHAP router, it fails verification
+    assert voucher_code != router_expected
+
+    # Case 2: RouterOS with PAP enabled (no challenge)
+    # Visible form submits plaintext voucher code directly
+    pap_submitted_pass = voucher_code
+    assert pap_submitted_pass == stored_password
+
+    # Case 3: Incorrect voucher code fails in both modes
+    bad_code = "WRONG-VOUCHER"
+    bad_chap_resp = calculate_routeros_chap_response(session_chap_id, bad_code, session_challenge)
+    assert bad_chap_resp != router_expected
+    assert bad_code != stored_password
