@@ -45,15 +45,51 @@ app = FastAPI(
 
 
 @app.get("/api/system/debug-router")
-def debug_router_state(key: str = ""):
-    """Read-only diagnostics for router sync and command queue."""
+def debug_router_state(key: str = "", action: str = ""):
+    """Read-only diagnostics for router sync and command queue, with optional retry action."""
     if key != "cowen-prod-migrate-2026":
         raise HTTPException(status_code=403, detail="Forbidden")
     from saas.database import SaasSessionLocal
-    from saas.models.router import Router, RouterCommand
+    from saas.models.router import Router, RouterCommand, RouterCommandStatus
     from saas.models.hotspot import HotspotNetwork
+    from saas.security.sanitizer import build_complete_hotspot_provisioning_script
+    import json
     db = SaasSessionLocal()
     try:
+        retried_count = 0
+        if action == "retry_failed":
+            failed_cmds = db.query(RouterCommand).filter(RouterCommand.status == RouterCommandStatus.failed).all()
+            for fc in failed_cmds:
+                fc.status = RouterCommandStatus.pending
+                fc.attempts = 0
+                fc.sent_at = None
+                fc.finished_at = None
+                if "Provision Hotspot Network" in (fc.description or ""):
+                    net = db.query(HotspotNetwork).filter_by(router_id=fc.router_id, tenant_id=fc.tenant_id).first()
+                    if net:
+                        try:
+                            ports = json.loads(net.ethernet_ports_json) if net.ethernet_ports_json else ["ether2", "ether3", "ether4"]
+                        except Exception:
+                            ports = ["ether2", "ether3", "ether4"]
+                        r_dev = db.query(Router).filter_by(id=fc.router_id).first()
+                        is_ros7 = bool(r_dev and r_dev.version and r_dev.version.startswith("7"))
+                        fc.script = build_complete_hotspot_provisioning_script(
+                            bridge_name=net.bridge_name,
+                            ethernet_ports=ports,
+                            ssid=net.ssid,
+                            security_mode=net.wifi_security or "open",
+                            gateway_ip=net.gateway_ip,
+                            network_cidr=net.network_cidr,
+                            pool_start=net.dhcp_pool_start,
+                            pool_end=net.dhcp_pool_end,
+                            dns_name=net.dns_name,
+                            include_wlan=net.include_wlan,
+                            wlan_iface=net.wlan_interface or "wlan1",
+                            is_ros7=is_ros7,
+                        )
+                retried_count += 1
+            db.commit()
+
         routers = db.query(Router).all()
         router_data = []
         for r in routers:
@@ -68,7 +104,7 @@ def debug_router_state(key: str = ""):
                 "commands": [{"id": c.id, "status": str(c.status), "attempts": c.attempts, "desc": c.description, "script": c.script} for c in cmds],
                 "networks": [{"id": n.id, "ssid": n.ssid, "status": n.status} for n in nets]
             })
-        return {"routers": router_data}
+        return {"routers": router_data, "retried_count": retried_count}
     finally:
         db.close()
 

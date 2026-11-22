@@ -96,7 +96,7 @@ _TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
 # RouterOS payload size boundaries for in-memory fetch
-BATCH_BYTES_ROS6 = 3500
+BATCH_BYTES_ROS6 = 3000
 BATCH_BYTES_ROS7 = 32768
 # Explicit session lifetime policies:
 SESSION_INACTIVITY_TIMEOUT = 43200  # 12 hours sliding inactivity timeout

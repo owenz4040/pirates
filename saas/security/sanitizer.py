@@ -247,7 +247,7 @@ def build_hotspot_bridge_command(
     wlan_iface: str = "wlan1",
     wan_iface: str = "ether1",
 ) -> str:
-    """Generates RouterOS commands to create customer bridge and add selected non-WAN ports."""
+    """Generates RouterOS commands to create customer bridge and safely add/reassign selected non-WAN ports."""
     v_bridge = validate_interface_name(bridge_name)
     q_bridge = quote_routeros(v_bridge)
 
@@ -263,7 +263,9 @@ def build_hotspot_bridge_command(
             continue  # Strictly NEVER add WAN port to customer bridge!
         q_port = quote_routeros(v_port)
         lines.append(
-            f":if ([:len [/interface bridge port find where bridge={q_bridge} and interface={q_port}]] = 0) do={{"
+            f":if ([:len [/interface bridge port find where interface={q_port}]] > 0) do={{"
+            f":do {{ /interface bridge port set [find where interface={q_port}] bridge={q_bridge} comment=\"COwen Customer Port\" }} on-error={{}}"
+            f"}} else={{"
             f":do {{ /interface bridge port add bridge={q_bridge} interface={q_port} comment=\"COwen Customer Port\" }} on-error={{}}"
             f"}}"
         )
@@ -272,7 +274,9 @@ def build_hotspot_bridge_command(
         v_wlan = validate_interface_name(wlan_iface)
         q_wlan = quote_routeros(v_wlan)
         lines.append(
-            f":if ([:len [/interface bridge port find where bridge={q_bridge} and interface={q_wlan}]] = 0) do={{"
+            f":if ([:len [/interface bridge port find where interface={q_wlan}]] > 0) do={{"
+            f":do {{ /interface bridge port set [find where interface={q_wlan}] bridge={q_bridge} comment=\"COwen Customer Wireless\" }} on-error={{}}"
+            f"}} else={{"
             f":do {{ /interface bridge port add bridge={q_bridge} interface={q_wlan} comment=\"COwen Customer Wireless\" }} on-error={{}}"
             f"}}"
         )
@@ -295,8 +299,6 @@ def build_hotspot_wireless_command(
     q_ssid = quote_routeros(v_ssid)
     v_wlan = validate_interface_name(wlan_iface)
     q_wlan = quote_routeros(v_wlan)
-    v_country = validate_comment(country) or "no_country_set"
-    q_country = quote_routeros(v_country)
 
     lines = []
 
@@ -321,10 +323,19 @@ def build_hotspot_wireless_command(
             f"}}"
         )
 
+    # Format country parameter safely:
+    # RouterOS wireless requires unquoted identifier or omitting country if no_country_set
+    c_raw = (country or "no_country_set").strip().lower()
+    if c_raw in ("no_country_set", "default", "none", ""):
+        country_param = ""
+    else:
+        clean_country = re.sub(r"[^a-z0-9_-]", "", c_raw)
+        country_param = f" country={clean_country}" if clean_country else ""
+
     # Legacy wireless interface configuration (RouterOS 6.49+ and RouterOS 7 legacy wireless)
     lines.append(
         f":if ([:len [/interface wireless find where name={q_wlan}]] > 0) do={{"
-        f"/interface wireless set [find where name={q_wlan}] mode=ap-bridge ssid={q_ssid} frequency=auto band=2ghz-b/g/n country={q_country} security-profile={q_sec} disabled=no comment=\"COwen Hotspot WiFi\""
+        f"/interface wireless set [find where name={q_wlan}] mode=ap-bridge ssid={q_ssid} frequency=auto band=2ghz-b/g/n{country_param} security-profile={q_sec} disabled=no comment=\"COwen Hotspot WiFi\""
         f"}}"
     )
 
@@ -562,231 +573,6 @@ def build_pppoe_secret_command(
     )
 
 
-def build_hotspot_bridge_command(
-    bridge_name: str,
-    ethernet_ports: list[str],
-    include_wlan: bool = True,
-    wlan_iface: str = "wlan1",
-    wan_iface: str = "ether1",
-) -> str:
-    """Generates RouterOS commands to create customer bridge and add selected non-WAN ports."""
-    v_bridge = validate_interface_name(bridge_name)
-    q_bridge = quote_routeros(v_bridge)
-
-    lines = [
-        f":if ([:len [/interface bridge find where name={q_bridge}]] = 0) do={{"
-        f"/interface bridge add name={q_bridge} comment=\"COwen Hotspot Customer Bridge\""
-        f"}}"
-    ]
-
-    for port in ethernet_ports:
-        v_port = validate_interface_name(port)
-        if v_port.lower() == wan_iface.lower():
-            continue  # Strictly NEVER add WAN port to customer bridge!
-        q_port = quote_routeros(v_port)
-        lines.append(
-            f":if ([:len [/interface bridge port find where bridge={q_bridge} and interface={q_port}]] = 0) do={{"
-            f":do {{ /interface bridge port add bridge={q_bridge} interface={q_port} comment=\"COwen Customer Port\" }} on-error={{}}"
-            f"}}"
-        )
-
-    if include_wlan and wlan_iface:
-        v_wlan = validate_interface_name(wlan_iface)
-        q_wlan = quote_routeros(v_wlan)
-        lines.append(
-            f":if ([:len [/interface bridge port find where bridge={q_bridge} and interface={q_wlan}]] = 0) do={{"
-            f":do {{ /interface bridge port add bridge={q_bridge} interface={q_wlan} comment=\"COwen Customer Wireless\" }} on-error={{}}"
-            f"}}"
-        )
-
-    return ";\n".join(lines)
-
-
-def build_hotspot_wireless_command(
-    ssid: str,
-    security_mode: str = "open",
-    password: str | None = None,
-    band: str = "2ghz-b/g/n",
-    channel: str = "auto",
-    country: str = "no_country_set",
-    wlan_iface: str = "wlan1",
-    is_ros7: bool = False,
-) -> str:
-    """Generates RouterOS commands to configure wireless interface, SSID, and security profile."""
-    v_ssid = validate_ssid(ssid)
-    q_ssid = quote_routeros(v_ssid)
-    v_wlan = validate_interface_name(wlan_iface)
-    q_wlan = quote_routeros(v_wlan)
-    v_country = validate_comment(country) or "no_country_set"
-    q_country = quote_routeros(v_country)
-
-    lines = []
-
-    if security_mode == "wpa2-psk" and password:
-        v_pass = validate_password(password)
-        q_pass = quote_routeros(v_pass)
-        sec_name = "COwen-Sec-WPA2"
-        q_sec = quote_routeros(sec_name)
-        lines.append(
-            f":if ([:len [/interface wireless security-profile find where name={q_sec}]] = 0) do={{"
-            f"/interface wireless security-profile add name={q_sec} mode=dynamic-keys authentication-types=wpa2-psk unicast-ciphers=aes-ccm group-ciphers=aes-ccm wpa2-pre-shared-key={q_pass} comment=\"COwen WPA2-PSK\""
-            f"}} else={{"
-            f"/interface wireless security-profile set [find where name={q_sec}] wpa2-pre-shared-key={q_pass}"
-            f"}}"
-        )
-    else:
-        sec_name = "COwen-Sec-Open"
-        q_sec = quote_routeros(sec_name)
-        lines.append(
-            f":if ([:len [/interface wireless security-profile find where name={q_sec}]] = 0) do={{"
-            f"/interface wireless security-profile add name={q_sec} mode=none comment=\"COwen Open WiFi\""
-            f"}}"
-        )
-
-    # Legacy wireless interface configuration (RouterOS 6.49+ and RouterOS 7 legacy wireless)
-    lines.append(
-        f":if ([:len [/interface wireless find where name={q_wlan}]] > 0) do={{"
-        f"/interface wireless set [find where name={q_wlan}] mode=ap-bridge ssid={q_ssid} frequency=auto band=2ghz-b/g/n country={q_country} security-profile={q_sec} disabled=no comment=\"COwen Hotspot WiFi\""
-        f"}}"
-    )
-
-    # RouterOS 7 WiFi interface support (for devices using wifi-qcom / wifi package)
-    if is_ros7:
-        wifi_auth = f"security.authentication-types=wpa2-psk security.passphrase={q_pass}" if (security_mode == "wpa2-psk" and password) else "security.authentication-types=none"
-        lines.append(
-            f":do {{"
-            f":if ([:len [/interface wifi find where name=\"wifi1\"]] > 0) do={{"
-            f"/interface wifi set [find where name=\"wifi1\"] configuration.mode=ap configuration.ssid={q_ssid} {wifi_auth} disabled=no comment=\"COwen Hotspot WiFi\""
-            f"}}"
-            f"}} on-error={{}}"
-        )
-
-    return ";\n".join(lines)
-
-
-def build_hotspot_ip_dhcp_dns_command(
-    bridge_name: str,
-    gateway_ip: str = "10.5.50.1",
-    netmask: str = "255.255.255.0",
-    network_cidr: str = "10.5.50.0/24",
-    pool_start: str = "10.5.50.10",
-    pool_end: str = "10.5.50.250",
-    dns_servers: str = "10.5.50.1,8.8.8.8,1.1.1.1",
-) -> str:
-    """Generates RouterOS commands to configure customer bridge IP address, DHCP pool, and DNS."""
-    v_bridge = validate_interface_name(bridge_name)
-    q_bridge = quote_routeros(v_bridge)
-    v_gw = gateway_ip.strip()
-    v_cidr = network_cidr.strip()
-    v_ranges = f"{pool_start.strip()}-{pool_end.strip()}"
-    q_gw_cidr = quote_routeros(f"{v_gw}/24")
-    q_net = quote_routeros(v_cidr.split("/")[0])
-    q_ranges = quote_routeros(v_ranges)
-    pool_name = "COwen-Hotspot-Pool"
-    q_pool = quote_routeros(pool_name)
-    dhcp_name = "COwen-Hotspot-DHCP"
-    q_dhcp = quote_routeros(dhcp_name)
-    q_dns = quote_routeros(dns_servers.strip())
-
-    lines = [
-        f":if ([:len [/ip address find where interface={q_bridge} and address={q_gw_cidr}]] = 0) do={{"
-        f"/ip address add address={q_gw_cidr} network={q_net} interface={q_bridge} comment=\"COwen Hotspot Gateway\""
-        f"}}",
-        f":if ([:len [/ip pool find where name={q_pool}]] = 0) do={{"
-        f"/ip pool add name={q_pool} ranges={q_ranges} comment=\"COwen Hotspot DHCP Pool\""
-        f"}} else={{"
-        f"/ip pool set [find where name={q_pool}] ranges={q_ranges}"
-        f"}}",
-        f":if ([:len [/ip dhcp-server find where name={q_dhcp}]] = 0) do={{"
-        f"/ip dhcp-server add name={q_dhcp} interface={q_bridge} address-pool={q_pool} lease-time=1h disabled=no comment=\"COwen Hotspot DHCP Server\""
-        f"}}",
-        f":if ([:len [/ip dhcp-server network find where address={quote_routeros(v_cidr)}]] = 0) do={{"
-        f"/ip dhcp-server network add address={quote_routeros(v_cidr)} gateway={quote_routeros(v_gw)} dns-server={q_dns} comment=\"COwen Hotspot Network\""
-        f"}}",
-        "/ip dns set allow-remote-requests=yes"
-    ]
-    return ";\n".join(lines)
-
-
-def build_hotspot_server_setup_command(
-    server_name: str = "COwen-Hotspot-Server",
-    server_profile_name: str = "COwen-Hotspot-Profile",
-    bridge_name: str = "COwen-Hotspot-Bridge",
-    pool_name: str = "COwen-Hotspot-Pool",
-    dns_name: str = "login.hotspot",
-    gateway_ip: str = "10.5.50.1",
-    network_cidr: str = "10.5.50.0/24",
-    html_dir: str = "hotspot",
-    login_by: str = "http-chap,cookie",
-) -> str:
-    """Generates RouterOS commands to configure Hotspot server, profile, and NAT masquerade."""
-    q_srv = quote_routeros(server_name.strip())
-    q_prof = quote_routeros(server_profile_name.strip())
-    q_bridge = quote_routeros(bridge_name.strip())
-    q_pool = quote_routeros(pool_name.strip())
-    q_dns_name = quote_routeros(dns_name.strip())
-    q_gw = quote_routeros(gateway_ip.strip())
-    q_html = quote_routeros(html_dir.strip())
-    q_cidr = quote_routeros(network_cidr.strip())
-    clean_login_by = quote_routeros(login_by.strip()).strip('"')
-
-    lines = [
-        f":if ([:len [/ip hotspot profile find where name={q_prof}]] = 0) do={{"
-        f"/ip hotspot profile add name={q_prof} hotspot-address={q_gw} dns-name={q_dns_name} html-directory={q_html} login-by={clean_login_by} use-radius=no comment=\"COwen Hotspot Profile\""
-        f"}} else={{"
-        f"/ip hotspot profile set [find where name={q_prof}] hotspot-address={q_gw} dns-name={q_dns_name} html-directory={q_html}"
-        f"}}",
-        f":if ([:len [/ip hotspot find where name={q_srv}]] = 0) do={{"
-        f"/ip hotspot add name={q_srv} interface={q_bridge} address-pool={q_pool} profile={q_prof} disabled=no comment=\"COwen Hotspot Server\""
-        f"}} else={{"
-        f"/ip hotspot set [find where name={q_srv}] interface={q_bridge} address-pool={q_pool} profile={q_prof} disabled=no"
-        f"}}",
-        f":if ([:len [/ip firewall nat find where src-address={q_cidr} and action=\"masquerade\" and comment=\"COwen Hotspot NAT\"]] = 0) do={{"
-        f"/ip firewall nat add chain=srcnat src-address={q_cidr} action=masquerade comment=\"COwen Hotspot NAT\""
-        f"}}"
-    ]
-    return ";\n".join(lines)
-
-
-def build_complete_hotspot_provisioning_script(
-    bridge_name: str,
-    ethernet_ports: list[str],
-    ssid: str,
-    security_mode: str = "open",
-    password: str | None = None,
-    gateway_ip: str = "10.5.50.1",
-    netmask: str = "255.255.255.0",
-    network_cidr: str = "10.5.50.0/24",
-    pool_start: str = "10.5.50.10",
-    pool_end: str = "10.5.50.250",
-    dns_name: str = "login.hotspot",
-    include_wlan: bool = True,
-    wlan_iface: str = "wlan1",
-    is_ros7: bool = False,
-) -> str:
-    """Combines staged Hotspot provisioning commands in dependency-safe order."""
-    cmd_bridge = build_hotspot_bridge_command(bridge_name, ethernet_ports, include_wlan, wlan_iface)
-    cmd_ip = build_hotspot_ip_dhcp_dns_command(bridge_name, gateway_ip, netmask, network_cidr, pool_start, pool_end)
-    cmd_hotspot = build_hotspot_server_setup_command(
-        bridge_name=bridge_name,
-        dns_name=dns_name,
-        gateway_ip=gateway_ip,
-        network_cidr=network_cidr,
-    )
-    stages = [cmd_bridge]
-    if include_wlan and ssid:
-        cmd_wifi = build_hotspot_wireless_command(
-            ssid=ssid,
-            security_mode=security_mode,
-            password=password,
-            wlan_iface=wlan_iface,
-            is_ros7=is_ros7,
-        )
-        stages.append(cmd_wifi)
-    stages.extend([cmd_ip, cmd_hotspot])
-    return ";\n".join(stages)
-
-
 def build_hotspot_user_command(
     code: str,
     password: str,
@@ -878,231 +664,6 @@ def build_hotspot_walled_garden_command(
             f"}}"
         )
     return ";\n".join(lines)
-
-
-def build_hotspot_bridge_command(
-    bridge_name: str,
-    ethernet_ports: list[str],
-    include_wlan: bool = True,
-    wlan_iface: str = "wlan1",
-    wan_iface: str = "ether1",
-) -> str:
-    """Generates RouterOS commands to create customer bridge and add selected non-WAN ports."""
-    v_bridge = validate_interface_name(bridge_name)
-    q_bridge = quote_routeros(v_bridge)
-
-    lines = [
-        f":if ([:len [/interface bridge find where name={q_bridge}]] = 0) do={{"
-        f"/interface bridge add name={q_bridge} comment=\"COwen Hotspot Customer Bridge\""
-        f"}}"
-    ]
-
-    for port in ethernet_ports:
-        v_port = validate_interface_name(port)
-        if v_port.lower() == wan_iface.lower():
-            continue  # Strictly NEVER add WAN port to customer bridge!
-        q_port = quote_routeros(v_port)
-        lines.append(
-            f":if ([:len [/interface bridge port find where bridge={q_bridge} and interface={q_port}]] = 0) do={{"
-            f":do {{ /interface bridge port add bridge={q_bridge} interface={q_port} comment=\"COwen Customer Port\" }} on-error={{}}"
-            f"}}"
-        )
-
-    if include_wlan and wlan_iface:
-        v_wlan = validate_interface_name(wlan_iface)
-        q_wlan = quote_routeros(v_wlan)
-        lines.append(
-            f":if ([:len [/interface bridge port find where bridge={q_bridge} and interface={q_wlan}]] = 0) do={{"
-            f":do {{ /interface bridge port add bridge={q_bridge} interface={q_wlan} comment=\"COwen Customer Wireless\" }} on-error={{}}"
-            f"}}"
-        )
-
-    return ";\n".join(lines)
-
-
-def build_hotspot_wireless_command(
-    ssid: str,
-    security_mode: str = "open",
-    password: str | None = None,
-    band: str = "2ghz-b/g/n",
-    channel: str = "auto",
-    country: str = "no_country_set",
-    wlan_iface: str = "wlan1",
-    is_ros7: bool = False,
-) -> str:
-    """Generates RouterOS commands to configure wireless interface, SSID, and security profile."""
-    v_ssid = validate_ssid(ssid)
-    q_ssid = quote_routeros(v_ssid)
-    v_wlan = validate_interface_name(wlan_iface)
-    q_wlan = quote_routeros(v_wlan)
-    v_country = validate_comment(country) or "no_country_set"
-    q_country = quote_routeros(v_country)
-
-    lines = []
-
-    if security_mode == "wpa2-psk" and password:
-        v_pass = validate_password(password)
-        q_pass = quote_routeros(v_pass)
-        sec_name = "COwen-Sec-WPA2"
-        q_sec = quote_routeros(sec_name)
-        lines.append(
-            f":if ([:len [/interface wireless security-profile find where name={q_sec}]] = 0) do={{"
-            f"/interface wireless security-profile add name={q_sec} mode=dynamic-keys authentication-types=wpa2-psk unicast-ciphers=aes-ccm group-ciphers=aes-ccm wpa2-pre-shared-key={q_pass} comment=\"COwen WPA2-PSK\""
-            f"}} else={{"
-            f"/interface wireless security-profile set [find where name={q_sec}] wpa2-pre-shared-key={q_pass}"
-            f"}}"
-        )
-    else:
-        sec_name = "COwen-Sec-Open"
-        q_sec = quote_routeros(sec_name)
-        lines.append(
-            f":if ([:len [/interface wireless security-profile find where name={q_sec}]] = 0) do={{"
-            f"/interface wireless security-profile add name={q_sec} mode=none comment=\"COwen Open WiFi\""
-            f"}}"
-        )
-
-    # Legacy wireless interface configuration (RouterOS 6.49+ and RouterOS 7 legacy wireless)
-    lines.append(
-        f":if ([:len [/interface wireless find where name={q_wlan}]] > 0) do={{"
-        f"/interface wireless set [find where name={q_wlan}] mode=ap-bridge ssid={q_ssid} frequency=auto band=2ghz-b/g/n country={q_country} security-profile={q_sec} disabled=no comment=\"COwen Hotspot WiFi\""
-        f"}}"
-    )
-
-    # RouterOS 7 WiFi interface support (for devices using wifi-qcom / wifi package)
-    if is_ros7:
-        wifi_auth = f"security.authentication-types=wpa2-psk security.passphrase={q_pass}" if (security_mode == "wpa2-psk" and password) else "security.authentication-types=none"
-        lines.append(
-            f":do {{"
-            f":if ([:len [/interface wifi find where name=\"wifi1\"]] > 0) do={{"
-            f"/interface wifi set [find where name=\"wifi1\"] configuration.mode=ap configuration.ssid={q_ssid} {wifi_auth} disabled=no comment=\"COwen Hotspot WiFi\""
-            f"}}"
-            f"}} on-error={{}}"
-        )
-
-    return ";\n".join(lines)
-
-
-def build_hotspot_ip_dhcp_dns_command(
-    bridge_name: str,
-    gateway_ip: str = "10.5.50.1",
-    netmask: str = "255.255.255.0",
-    network_cidr: str = "10.5.50.0/24",
-    pool_start: str = "10.5.50.10",
-    pool_end: str = "10.5.50.250",
-    dns_servers: str = "10.5.50.1,8.8.8.8,1.1.1.1",
-) -> str:
-    """Generates RouterOS commands to configure customer bridge IP address, DHCP pool, and DNS."""
-    v_bridge = validate_interface_name(bridge_name)
-    q_bridge = quote_routeros(v_bridge)
-    v_gw = gateway_ip.strip()
-    v_cidr = network_cidr.strip()
-    v_ranges = f"{pool_start.strip()}-{pool_end.strip()}"
-    q_gw_cidr = quote_routeros(f"{v_gw}/24")
-    q_net = quote_routeros(v_cidr.split("/")[0])
-    q_ranges = quote_routeros(v_ranges)
-    pool_name = "COwen-Hotspot-Pool"
-    q_pool = quote_routeros(pool_name)
-    dhcp_name = "COwen-Hotspot-DHCP"
-    q_dhcp = quote_routeros(dhcp_name)
-    q_dns = quote_routeros(dns_servers.strip())
-
-    lines = [
-        f":if ([:len [/ip address find where interface={q_bridge} and address={q_gw_cidr}]] = 0) do={{"
-        f"/ip address add address={q_gw_cidr} network={q_net} interface={q_bridge} comment=\"COwen Hotspot Gateway\""
-        f"}}",
-        f":if ([:len [/ip pool find where name={q_pool}]] = 0) do={{"
-        f"/ip pool add name={q_pool} ranges={q_ranges} comment=\"COwen Hotspot DHCP Pool\""
-        f"}} else={{"
-        f"/ip pool set [find where name={q_pool}] ranges={q_ranges}"
-        f"}}",
-        f":if ([:len [/ip dhcp-server find where name={q_dhcp}]] = 0) do={{"
-        f"/ip dhcp-server add name={q_dhcp} interface={q_bridge} address-pool={q_pool} lease-time=1h disabled=no comment=\"COwen Hotspot DHCP Server\""
-        f"}}",
-        f":if ([:len [/ip dhcp-server network find where address={quote_routeros(v_cidr)}]] = 0) do={{"
-        f"/ip dhcp-server network add address={quote_routeros(v_cidr)} gateway={quote_routeros(v_gw)} dns-server={q_dns} comment=\"COwen Hotspot Network\""
-        f"}}",
-        "/ip dns set allow-remote-requests=yes"
-    ]
-    return ";\n".join(lines)
-
-
-def build_hotspot_server_setup_command(
-    server_name: str = "COwen-Hotspot-Server",
-    server_profile_name: str = "COwen-Hotspot-Profile",
-    bridge_name: str = "COwen-Hotspot-Bridge",
-    pool_name: str = "COwen-Hotspot-Pool",
-    dns_name: str = "login.hotspot",
-    gateway_ip: str = "10.5.50.1",
-    network_cidr: str = "10.5.50.0/24",
-    html_dir: str = "hotspot",
-    login_by: str = "http-chap,cookie",
-) -> str:
-    """Generates RouterOS commands to configure Hotspot server, profile, and NAT masquerade."""
-    q_srv = quote_routeros(server_name.strip())
-    q_prof = quote_routeros(server_profile_name.strip())
-    q_bridge = quote_routeros(bridge_name.strip())
-    q_pool = quote_routeros(pool_name.strip())
-    q_dns_name = quote_routeros(dns_name.strip())
-    q_gw = quote_routeros(gateway_ip.strip())
-    q_html = quote_routeros(html_dir.strip())
-    q_cidr = quote_routeros(network_cidr.strip())
-    clean_login_by = quote_routeros(login_by.strip()).strip('"')
-
-    lines = [
-        f":if ([:len [/ip hotspot profile find where name={q_prof}]] = 0) do={{"
-        f"/ip hotspot profile add name={q_prof} hotspot-address={q_gw} dns-name={q_dns_name} html-directory={q_html} login-by={clean_login_by} use-radius=no comment=\"COwen Hotspot Profile\""
-        f"}} else={{"
-        f"/ip hotspot profile set [find where name={q_prof}] hotspot-address={q_gw} dns-name={q_dns_name} html-directory={q_html}"
-        f"}}",
-        f":if ([:len [/ip hotspot find where name={q_srv}]] = 0) do={{"
-        f"/ip hotspot add name={q_srv} interface={q_bridge} address-pool={q_pool} profile={q_prof} disabled=no comment=\"COwen Hotspot Server\""
-        f"}} else={{"
-        f"/ip hotspot set [find where name={q_srv}] interface={q_bridge} address-pool={q_pool} profile={q_prof} disabled=no"
-        f"}}",
-        f":if ([:len [/ip firewall nat find where src-address={q_cidr} and action=\"masquerade\" and comment=\"COwen Hotspot NAT\"]] = 0) do={{"
-        f"/ip firewall nat add chain=srcnat src-address={q_cidr} action=masquerade comment=\"COwen Hotspot NAT\""
-        f"}}"
-    ]
-    return ";\n".join(lines)
-
-
-def build_complete_hotspot_provisioning_script(
-    bridge_name: str,
-    ethernet_ports: list[str],
-    ssid: str,
-    security_mode: str = "open",
-    password: str | None = None,
-    gateway_ip: str = "10.5.50.1",
-    netmask: str = "255.255.255.0",
-    network_cidr: str = "10.5.50.0/24",
-    pool_start: str = "10.5.50.10",
-    pool_end: str = "10.5.50.250",
-    dns_name: str = "login.hotspot",
-    include_wlan: bool = True,
-    wlan_iface: str = "wlan1",
-    is_ros7: bool = False,
-) -> str:
-    """Combines staged Hotspot provisioning commands in dependency-safe order."""
-    cmd_bridge = build_hotspot_bridge_command(bridge_name, ethernet_ports, include_wlan, wlan_iface)
-    cmd_ip = build_hotspot_ip_dhcp_dns_command(bridge_name, gateway_ip, netmask, network_cidr, pool_start, pool_end)
-    cmd_hotspot = build_hotspot_server_setup_command(
-        bridge_name=bridge_name,
-        dns_name=dns_name,
-        gateway_ip=gateway_ip,
-        network_cidr=network_cidr,
-    )
-    stages = [cmd_bridge]
-    if include_wlan and ssid:
-        cmd_wifi = build_hotspot_wireless_command(
-            ssid=ssid,
-            security_mode=security_mode,
-            password=password,
-            wlan_iface=wlan_iface,
-            is_ros7=is_ros7,
-        )
-        stages.append(cmd_wifi)
-    stages.extend([cmd_ip, cmd_hotspot])
-    return ";\n".join(stages)
 
 
 def build_mikrotik_sync_script_source(
