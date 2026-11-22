@@ -2129,32 +2129,26 @@ async def router_sync_endpoint(
     for cmd in candidate_commands:
         desc = cmd.description or ""
 
-        # Dependency Check 1: Hotspot Stages (Stage N requires stages 1..N-1 to be confirmed 'done', and none failed)
+        # Dependency Check 1: Hotspot Stages (Stage N requires latest command of stages 1..N-1 to be 'done')
         stage_match = re.search(r"Hotspot Stage (\d+)/(\d+)", desc)
         if stage_match:
             curr_stage = int(stage_match.group(1))
             if curr_stage > 1:
-                # If ANY earlier stage failed, strictly block execution of subsequent stages
-                earlier_failed = any(
-                    c.status == RouterCommandStatus.failed
-                    and (m := re.search(r"Hotspot Stage (\d+)/(\d+)", c.description or ""))
-                    and int(m.group(1)) < curr_stage
-                    for c in existing_cmds
-                )
-                if earlier_failed:
-                    continue
-
-                # All stages 1..(curr_stage - 1) must be in confirmed 'done' status
-                all_earlier_done = all(
-                    any(
-                        c.status == RouterCommandStatus.done
-                        and (m := re.search(r"Hotspot Stage (\d+)/(\d+)", c.description or ""))
+                stage_blocked = False
+                for req_stage in range(1, curr_stage):
+                    matching = [
+                        c for c in existing_cmds
+                        if (m := re.search(r"Hotspot Stage (\d+)/(\d+)", c.description or ""))
                         and int(m.group(1)) == req_stage
-                        for c in existing_cmds
-                    )
-                    for req_stage in range(1, curr_stage)
-                )
-                if not all_earlier_done:
+                    ]
+                    if not matching:
+                        stage_blocked = True
+                        break
+                    latest = max(matching, key=lambda x: x.created_at)
+                    if latest.status != RouterCommandStatus.done:
+                        stage_blocked = True
+                        break
+                if stage_blocked:
                     continue
 
         # Dependency Check 2: Customer vouchers must never be dispatched before network is confirmed provisioned
