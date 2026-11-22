@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from saas.config import saas_settings
-from saas.database import SaasBase, get_saas_db, saas_engine
+from saas.database import SaasBase, ensure_schema_synced_once, get_saas_db, saas_engine
 from saas.models.payments import TenantPaymentConfig
 from saas.models.router import Router, RouterStatus
 from saas.routers.marketing import marketing_router
@@ -33,11 +33,11 @@ from saas.security.context import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Skip remote DB connection during tests
+    # Ensure database schema is synced during application startup
     import os
     if not os.environ.get("PYTEST_CURRENT_TEST") and os.environ.get("TESTING") != "true":
         try:
-            SaasBase.metadata.create_all(bind=saas_engine)
+            ensure_schema_synced_once(saas_engine)
         except Exception:
             pass
     yield
