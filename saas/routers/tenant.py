@@ -2143,6 +2143,17 @@ async def router_ack_endpoint(
                 if not v.first_used_at:
                     v.first_used_at = now_ts
 
+            # Mark associated HotspotNetwork as provisioned
+            if "Provision Hotspot Network" in (cmd.description or ""):
+                h_net = db.scalar(
+                    select(HotspotNetwork).where(
+                        HotspotNetwork.tenant_id == router.tenant_id,
+                        HotspotNetwork.router_id == router.id,
+                    )
+                )
+                if h_net:
+                    h_net.status = "provisioned"
+
     if failed_ids:
         cmds_failed = db.scalars(
             select(RouterCommand).where(

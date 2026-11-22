@@ -1133,7 +1133,7 @@ def build_mikrotik_sync_script_source(
         ':local info (\\"version=\\" . \\$ver . \\"&uptime=\\" . \\$upt . \\"&cpu=\\" . \\$cpu . \\"&board=\\" . \\$brd);',
         ':local body \\"\\";',
         ':local status \\"\\";',
-        f':do {{ :local res [/tool fetch url=\\"{clean_url}\\" http-method=post http-header-field=\\"{header_val}\\" http-data=\\$info check-certificate=yes-without-crl output=user as-value]; :set status (\\$res->\\"status\\"); :set body (\\$res->\\"data\\"); :log info \\"COwen_Sync: Check-in successful\\"; }} on-error={{ :log warning \\"COwen_Sync: HTTPS fetch failed - check network or TLS certificates\\" }};',
+        f':do {{ :local res [/tool fetch url=\\"{clean_url}\\" http-method=post http-header-field=\\"{header_val}\\" http-data=\\$info check-certificate=yes-without-crl output=user as-value]; :set status (\\$res->\\"status\\"); :set body (\\$res->\\"data\\"); :log info \\"COwen_Sync: Check-in successful\\"; }} on-error={{ :log warning \\"COwen_Sync: HTTPS fetch failed - check network or TLS certificates\\"; }};',
         ':if (\\$status = \\"finished\\" and [:len \\$body] >= 16 and [:len \\$body] <= 32768 and [:pick \\$body 0 16] = \\"# COwen-Batch-OK\\") do={ :do { :local run [:parse \\$body]; \\$run; } on-error={ :log warning \\"COwen_Sync: batch command execution error\\" }; };'
     ]
     return " ".join(source_statements)
@@ -1174,20 +1174,21 @@ def build_mikrotik_rsc_file(
         f"    }}\n"
         f"}}\n\n"
         f"# Step 2: Ensure official ISRG Root X1 CA is installed and trusted for TLS verification\n"
-        f":if ([:len [/certificate find where fingerprint=\"{ISRG_ROOT_X1_SHA256}\"]] = 0) do={{\n"
-        f"    :do {{\n"
+        f"# Fingerprint: {ISRG_ROOT_X1_SHA256}\n"
+        f":do {{\n"
+        f"    :local certFound false\n"
+        f"    :foreach c in=[/certificate find] do={{\n"
+        f"        :do {{ :if ([/certificate get $c fingerprint] = \"{ISRG_ROOT_X1_SHA256}\") do={{ :set certFound true }} }} on-error={{}}\n"
+        f"    }}\n"
+        f"    :if (!$certFound) do={{\n"
         f"        /file print file=\"cowen_rootca\"\n"
         f"        :delay 2s\n"
         f"        /file set cowen_rootca.txt contents=\"{ISRG_ROOT_X1_PEM}\"\n"
         f"        /certificate import file-name=cowen_rootca.txt passphrase=\"\"\n"
         f"        /file remove [find name=\"cowen_rootca.txt\"]\n"
-        f"        /certificate set [find where fingerprint=\"{ISRG_ROOT_X1_SHA256}\"] trusted=yes\n"
-        f"        :log info \"COwen_Sync: ISRG Root X1 certificate imported and trusted\"\n"
-        f"    }} on-error={{\n"
-        f"        :log warning \"COwen_Sync: Root CA inline import skipped (upload isrgrootx1.crt if not present)\"\n"
         f"    }}\n"
-        f"}} else={{\n"
-        f"    /certificate set [find where fingerprint=\"{ISRG_ROOT_X1_SHA256}\"] trusted=yes\n"
+        f"}} on-error={{\n"
+        f"    :log warning \"COwen_Sync: Root CA check or import skipped\"\n"
         f"}}\n\n"
         f"# Step 3: Remove any previous synchronization script and scheduler safely\n"
         f":do {{ /system script remove [find name=\"COwen_Sync_Script\"] }} on-error={{}}\n"

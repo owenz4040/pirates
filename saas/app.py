@@ -44,6 +44,35 @@ app = FastAPI(
 )
 
 
+@app.get("/api/system/debug-router")
+def debug_router_state(key: str = ""):
+    """Read-only diagnostics for router sync and command queue."""
+    if key != "cowen-prod-migrate-2026":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    from saas.database import SaasSessionLocal
+    from saas.models.router import Router, RouterCommand
+    from saas.models.hotspot import HotspotNetwork
+    db = SaasSessionLocal()
+    try:
+        routers = db.query(Router).all()
+        router_data = []
+        for r in routers:
+            cmds = db.query(RouterCommand).filter_by(router_id=r.id).all()
+            nets = db.query(HotspotNetwork).filter_by(router_id=r.id).all()
+            router_data.append({
+                "id": r.id,
+                "name": r.name,
+                "status": str(r.status),
+                "last_seen_at": str(r.last_seen_at),
+                "version": r.version,
+                "commands": [{"id": c.id, "status": str(c.status), "attempts": c.attempts, "desc": c.description, "script": c.script} for c in cmds],
+                "networks": [{"id": n.id, "ssid": n.ssid, "status": n.status} for n in nets]
+            })
+        return {"routers": router_data}
+    finally:
+        db.close()
+
+
 @app.get("/api/system/migrate")
 def run_system_migration(key: str = ""):
     """Safe, single-runner administrative migration endpoint."""
