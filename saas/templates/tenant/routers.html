@@ -47,11 +47,12 @@
             </div>
           </td>
           <td>
-            {% if r.status.value == 'online' %}
+            {% set r_stat = ((r.status.value if r.status.value is defined else r.status) | string).lower() %}
+            {% if 'online' in r_stat %}
             <span class="badge badge-online">● Online</span>
-            {% elif r.status.value == 'provisioning' %}
+            {% elif 'provisioning' in r_stat %}
             <span class="badge badge-provisioning">● Provisioning</span>
-            {% elif r.status.value == 'suspended' %}
+            {% elif 'suspended' in r_stat %}
             <span class="badge badge-offline">● Suspended</span>
             {% else %}
             <span class="badge badge-offline">● Offline</span>
@@ -97,7 +98,7 @@
                   Rotate Token
                 </button>
               </form>
-              {% if r.status.value != 'suspended' %}
+              {% if 'suspended' not in r_stat %}
               <form method="post" action="/tenant/routers/{{ r.id }}/deactivate" style="display: inline;" onsubmit="return confirm('Suspend router sync for {{ r.name }}?');">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" class="btn btn-danger" style="padding: 6px 12px; font-size: 11px;">

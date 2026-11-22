@@ -68,9 +68,13 @@ from saas.security.rate_limit import (
 from saas.security.sanitizer import (
     CommandInjectionError,
     build_complete_hotspot_provisioning_script,
+    build_hotspot_bridge_command,
+    build_hotspot_ip_dhcp_dns_command,
     build_hotspot_profile_command,
+    build_hotspot_server_setup_command,
     build_hotspot_user_command,
     build_hotspot_walled_garden_command,
+    build_hotspot_wireless_command,
     build_mikrotik_rsc_file,
     build_mikrotik_sync_script_source,
     build_mikrotik_terminal_commands,
@@ -95,8 +99,8 @@ logger = logging.getLogger("saas.tenant")
 _TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
-# RouterOS payload size boundaries for in-memory fetch
-BATCH_BYTES_ROS6 = 3000
+# RouterOS payload size boundaries for in-memory fetch (strict 2500 bytes for ROS6)
+BATCH_BYTES_ROS6 = 2500
 BATCH_BYTES_ROS7 = 32768
 # Explicit session lifetime policies:
 SESSION_INACTIVITY_TIMEOUT = 43200  # 12 hours sliding inactivity timeout
@@ -1493,7 +1497,8 @@ def tenant_hotspot_network_provision(
         set_flash(request, error=f"Validation failed: {e}")
         return RedirectResponse(url="/tenant/hotspot", status_code=status.HTTP_303_SEE_OTHER)
 
-    # Process Ethernet ports - strictly ensure WAN port ether1 is never included
+    # Process Ethernet ports - strictly ensure WAN port ether1 is never included.
+    # Preserve existing topology: do NOT default to ether2-4 without explicit user selection.
     active_ports: list[str] = []
     if ethernet_ports:
         for p in ethernet_ports:
@@ -1504,8 +1509,6 @@ def tenant_hotspot_network_provision(
                 active_ports.append(validate_interface_name(p_clean))
             except CommandInjectionError:
                 pass
-    if not active_ports:
-        active_ports = ["ether2", "ether3", "ether4"]
 
     # Security profile check
     clean_sec = wifi_security.strip().lower()
@@ -1525,21 +1528,41 @@ def tenant_hotspot_network_provision(
     gw_parts = gateway_ip.strip().split(".")
     net_cidr = f"{gw_parts[0]}.{gw_parts[1]}.{gw_parts[2]}.0/24" if len(gw_parts) == 4 else "10.5.50.0/24"
 
-    # Build provisioning script
-    script = build_complete_hotspot_provisioning_script(
+    # Build 4 staged provisioning commands (< 800 bytes each) for reliable RouterOS 6/7 execution
+    script_stage1 = build_hotspot_bridge_command(
         bridge_name=clean_bridge,
         ethernet_ports=active_ports,
+        include_wlan=include_wlan,
+        wlan_iface=clean_wlan,
+    )
+    script_stage2 = build_hotspot_wireless_command(
         ssid=clean_ssid,
         security_mode=clean_sec,
         password=clean_pass,
+        band=wireless_band.strip(),
+        channel=wireless_channel.strip(),
+        country=wireless_country.strip(),
+        wlan_iface=clean_wlan,
+        is_ros7=is_ros7,
+    ) if (include_wlan and clean_ssid) else ""
+    script_stage3 = build_hotspot_ip_dhcp_dns_command(
+        bridge_name=clean_bridge,
         gateway_ip=gateway_ip.strip(),
         network_cidr=net_cidr,
         pool_start=dhcp_pool_start.strip(),
         pool_end=dhcp_pool_end.strip(),
+        dns_servers=f"{gateway_ip.strip()},8.8.8.8,1.1.1.1",
+    )
+    script_stage4 = build_hotspot_server_setup_command(
+        server_name=f"{clean_bridge}-Server",
+        server_profile_name=f"{clean_bridge}-Profile",
+        bridge_name=clean_bridge,
+        pool_name="COwen-Hotspot-Pool",
         dns_name=dns_name.strip(),
-        include_wlan=include_wlan,
-        wlan_iface=clean_wlan,
-        is_ros7=is_ros7,
+        gateway_ip=gateway_ip.strip(),
+        network_cidr=net_cidr,
+        html_dir="hotspot",
+        login_by="http-chap,cookie",
     )
 
     # Create or update HotspotNetwork record
@@ -1588,15 +1611,25 @@ def tenant_hotspot_network_provision(
         net_record.dns_name = dns_name.strip()
         net_record.status = "queued"
 
-    # Queue RouterCommand
-    cmd = RouterCommand(
-        tenant_id=tenant_id,
-        router_id=router.id,
-        description=f"Provision Hotspot Network: '{clean_ssid}' on {clean_bridge} ({gateway_ip.strip()}/24)",
-        script=script,
-        status=RouterCommandStatus.pending,
-    )
-    db.add(cmd)
+    # Queue 4 staged RouterCommands with explicit dependencies
+    staged_definitions = [
+        ("Hotspot Stage 1/4: Bridge & Ports", script_stage1),
+        ("Hotspot Stage 2/4: Wireless AP", script_stage2),
+        ("Hotspot Stage 3/4: IP Gateway & DHCP", script_stage3),
+        ("Hotspot Stage 4/4: Hotspot Server & NAT", script_stage4),
+    ]
+
+    for stage_title, stage_source in staged_definitions:
+        if stage_source and stage_source.strip():
+            cmd = RouterCommand(
+                tenant_id=tenant_id,
+                router_id=router.id,
+                description=f"{stage_title} ('{clean_ssid}')",
+                script=stage_source,
+                status=RouterCommandStatus.pending,
+            )
+            db.add(cmd)
+
     db.commit()
 
     set_flash(request, msg=f"Hotspot network provisioning for '{clean_ssid}' successfully queued for router '{router.name}'.")
@@ -2071,17 +2104,86 @@ async def router_sync_endpoint(
     is_ros7 = (router.version or "").startswith("7")
     limit_bytes = BATCH_BYTES_ROS7 if is_ros7 else BATCH_BYTES_ROS6
 
+    base_url = get_effective_base_url(request)
+    ack_url = f"{base_url}/api/router/ack"
+
     batch: list[RouterCommand] = []
-    total_size = 0
+
+    # Pre-fetch existing completed/failed commands for this router to evaluate stage dependencies
+    existing_cmds = db.scalars(
+        select(RouterCommand).where(
+            RouterCommand.router_id == router.id,
+            RouterCommand.tenant_id == router.tenant_id,
+        )
+    ).all()
+
+    # Determine if hotspot network is fully confirmed provisioned by router ACK
+    h_net = db.scalar(
+        select(HotspotNetwork).where(
+            HotspotNetwork.tenant_id == router.tenant_id,
+            HotspotNetwork.router_id == router.id,
+        )
+    )
+    network_is_provisioned = bool(h_net and h_net.status == "provisioned")
+
     for cmd in candidate_commands:
-        cost = len(cmd.script) + 120
-        if batch and (total_size + cost > limit_bytes):
-            break
-        cmd.status = RouterCommandStatus.sent
-        cmd.sent_at = now_ts
-        cmd.attempts += 1
-        batch.append(cmd)
-        total_size += cost
+        desc = cmd.description or ""
+
+        # Dependency Check 1: Hotspot Stages (Stage N requires stages 1..N-1 to be confirmed 'done', and none failed)
+        stage_match = re.search(r"Hotspot Stage (\d+)/(\d+)", desc)
+        if stage_match:
+            curr_stage = int(stage_match.group(1))
+            if curr_stage > 1:
+                # If ANY earlier stage failed, strictly block execution of subsequent stages
+                earlier_failed = any(
+                    c.status == RouterCommandStatus.failed
+                    and (m := re.search(r"Hotspot Stage (\d+)/(\d+)", c.description or ""))
+                    and int(m.group(1)) < curr_stage
+                    for c in existing_cmds
+                )
+                if earlier_failed:
+                    continue
+
+                # All stages 1..(curr_stage - 1) must be in confirmed 'done' status
+                all_earlier_done = all(
+                    any(
+                        c.status == RouterCommandStatus.done
+                        and (m := re.search(r"Hotspot Stage (\d+)/(\d+)", c.description or ""))
+                        and int(m.group(1)) == req_stage
+                        for c in existing_cmds
+                    )
+                    for req_stage in range(1, curr_stage)
+                )
+                if not all_earlier_done:
+                    continue
+
+        # Dependency Check 2: Customer vouchers must never be dispatched before network is confirmed provisioned
+        if ("voucher" in desc.lower() or cmd.voucher_id) and not network_is_provisioned:
+            continue
+
+        # Exact Rendered Byte Count Check (including magic header, command statements, and ACK fetch)
+        trial_batch = batch + [cmd]
+        trial_rendered = render_router_batch(trial_batch, ack_url, x_router_token.strip())
+        trial_bytes = len(trial_rendered.encode("utf-8"))
+
+        if trial_bytes > limit_bytes:
+            if not batch:
+                # The single candidate command exceeds the limit by itself!
+                # Reject oversized command immediately - never truncate, never send.
+                cmd.status = RouterCommandStatus.failed
+                cmd.finished_at = now_ts
+                logger.warning(
+                    "RouterCommand %s rejected: rendered batch size (%d bytes) exceeds ROS%s limit (%d bytes)",
+                    cmd.id, trial_bytes, "7" if is_ros7 else "6", limit_bytes
+                )
+            else:
+                # Batch has reached its safe limit for this check-in cycle; stop packing
+                break
+        else:
+            cmd.status = RouterCommandStatus.sent
+            cmd.sent_at = now_ts
+            cmd.attempts += 1
+            batch.append(cmd)
 
     db.commit()
 
@@ -2100,8 +2202,6 @@ async def router_sync_endpoint(
             ],
         }
 
-    base_url = get_effective_base_url(request)
-    ack_url = f"{base_url}/api/router/ack"
     script_text = render_router_batch(batch, ack_url, x_router_token.strip())
     return PlainTextResponse(content=script_text, media_type="text/plain")
 
@@ -2157,8 +2257,8 @@ async def router_ack_endpoint(
                 if not v.first_used_at:
                     v.first_used_at = now_ts
 
-            # Mark associated HotspotNetwork as provisioned
-            if "Provision Hotspot Network" in (cmd.description or ""):
+            # Mark associated HotspotNetwork state based on all stages
+            if "Hotspot Stage" in (cmd.description or "") or "Provision Hotspot Network" in (cmd.description or ""):
                 h_net = db.scalar(
                     select(HotspotNetwork).where(
                         HotspotNetwork.tenant_id == router.tenant_id,
@@ -2166,7 +2266,21 @@ async def router_ack_endpoint(
                     )
                 )
                 if h_net:
-                    h_net.status = "provisioned"
+                    staged_cmds = db.scalars(
+                        select(RouterCommand).where(
+                            RouterCommand.router_id == router.id,
+                            RouterCommand.tenant_id == router.tenant_id,
+                            RouterCommand.description.like("%Hotspot Stage%"),
+                        )
+                    ).all()
+                    if any(c.status == RouterCommandStatus.failed for c in staged_cmds):
+                        h_net.status = "failed"
+                    elif len(staged_cmds) >= 4 and all(c.status == RouterCommandStatus.done for c in staged_cmds):
+                        h_net.status = "provisioned"
+                    elif not staged_cmds and cmd.status == RouterCommandStatus.done:
+                        h_net.status = "provisioned"
+                    else:
+                        h_net.status = "provisioning"
 
     if failed_ids:
         cmds_failed = db.scalars(
@@ -2179,6 +2293,16 @@ async def router_ack_endpoint(
         for cmd in cmds_failed:
             cmd.status = RouterCommandStatus.failed
             cmd.finished_at = now_ts
+
+            if "Hotspot Stage" in (cmd.description or "") or "Provision Hotspot Network" in (cmd.description or ""):
+                h_net = db.scalar(
+                    select(HotspotNetwork).where(
+                        HotspotNetwork.tenant_id == router.tenant_id,
+                        HotspotNetwork.router_id == router.id,
+                    )
+                )
+                if h_net:
+                    h_net.status = "failed"
 
             # Transition associated vouchers to provisioning_failed
             vouchers = db.scalars(

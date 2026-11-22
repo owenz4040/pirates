@@ -75,7 +75,8 @@
         <tr>
           <td>
             <div style="font-weight: 600; color: #fff;">{{ s.full_name }}</div>
-            <div style="font-size: 11px; color: var(--text-dim);">Type: {{ s.connection_type.value | upper }}</div>
+            {% set c_type = ((s.connection_type.value if s.connection_type.value is defined else s.connection_type) | string).upper() %}
+            <div style="font-size: 11px; color: var(--text-dim);">Type: {{ c_type }}</div>
           </td>
           <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--gold);">
             {{ s.username }}
@@ -89,9 +90,10 @@
             <div style="font-size: 11px; color: var(--text-dim);">{{ s.email or "" }}</div>
           </td>
           <td>
-            {% if s.status.value == 'active' %}
+            {% set s_stat = ((s.status.value if s.status.value is defined else s.status) | string).lower() %}
+            {% if 'active' in s_stat %}
             <span class="badge badge-online">● Active</span>
-            {% elif s.status.value == 'suspended' %}
+            {% elif 'suspended' in s_stat %}
             <span class="badge badge-provisioning">● Suspended</span>
             {% else %}
             <span class="badge badge-offline">● Expired</span>
@@ -108,7 +110,7 @@
             <div style="display: inline-flex; gap: 8px; justify-content: flex-end;">
               <form method="post" action="/tenant/pppoe/subscribers/{{ s.id }}/toggle-status" style="margin: 0;">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                {% if s.status.value == 'active' %}
+                {% if 'active' in s_stat %}
                 <button type="submit" class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px; color: var(--red);" title="Suspend and kick active session">Suspend</button>
                 {% else %}
                 <button type="submit" class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px; color: var(--green);" title="Reactivate subscriber on router">Activate</button>

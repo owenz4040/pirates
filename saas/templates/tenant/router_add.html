@@ -13,7 +13,7 @@
       <div>
         <div class="card-title" style="color: var(--amber);">Subscription Plan Limit Reached</div>
         <div class="card-desc">
-          Your current <strong>{{ tenant.subscription.tier.value | upper }}</strong> subscription allows up to 
+          Your current <strong>{{ ((tenant.subscription.tier.value if tenant.subscription.tier.value is defined else tenant.subscription.tier) | string | upper) if (tenant and tenant.subscription and tenant.subscription.tier) else "STARTER" }}</strong> subscription allows up to 
           <strong>{{ max_allowed }}</strong> connected router{{ "s" if max_allowed > 1 else "" }}. 
           You currently have {{ current_count }} router{{ "s" if current_count > 1 else "" }} enrolled.
         </div>

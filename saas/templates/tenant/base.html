@@ -520,7 +520,7 @@
       <div class="tenant-badge">
         <div class="tenant-name">{{ tenant.name if tenant else "ISP Admin" }}</div>
         <div class="tenant-plan">
-          {{ tenant.subscription.tier.value | upper if (tenant and tenant.subscription) else "STARTER" }} PLAN
+          {{ ((tenant.subscription.tier.value if tenant.subscription.tier.value is defined else tenant.subscription.tier) | string | upper) if (tenant and tenant.subscription and tenant.subscription.tier) else "STARTER" }} PLAN
         </div>
       </div>
     </div>

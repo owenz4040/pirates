@@ -27,7 +27,7 @@ if db_url.startswith("sqlite"):
     connect_args = {"check_same_thread": False}
     saas_engine = create_engine(db_url, connect_args=connect_args)
 elif os.environ.get("VERCEL"):
-    saas_engine = create_engine(db_url, poolclass=NullPool)
+    saas_engine = create_engine(db_url, poolclass=NullPool, connect_args={"connect_timeout": 8})
 else:
     saas_engine = create_engine(db_url, pool_pre_ping=True)
 

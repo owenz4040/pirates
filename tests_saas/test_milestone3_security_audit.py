@@ -548,7 +548,7 @@ def test_routeros_setup_script_structure_and_signature_check():
 
     # 5. Safe execution wrapping
     assert ":do {" in script
-    assert ":local run [:parse $body];" in script or r":local run [:parse \$body];" in script
+    assert ":local run [:parse $body];" in script or r":local run [:parse \$body];" in script or r":set run [:parse \$body];" in script
     assert "$run;" in script or r"\$run;" in script
 
 
@@ -1471,17 +1471,18 @@ def test_tenant_hotspot_network_provision_route(client, db_session):
     assert "ether1" not in net.ethernet_ports_json
     assert "ether2" in net.ethernet_ports_json
 
-    # Verify RouterCommand queued
-    cmd = db_session.scalar(
+    # Verify staged RouterCommands queued
+    cmds = db_session.scalars(
         select(RouterCommand).where(
             RouterCommand.tenant_id == tenant.id,
             RouterCommand.router_id == router.id,
         )
-    )
-    assert cmd is not None
-    assert cmd.status == RouterCommandStatus.pending
-    assert "Pirate's WiFi" in cmd.script
-    assert 'interface="ether1"' not in cmd.script
+    ).all()
+    assert len(cmds) == 4
+    for c in cmds:
+        assert c.status == RouterCommandStatus.pending
+    assert any("Pirate's WiFi" in c.script for c in cmds)
+    assert not any('interface="ether1"' in c.script for c in cmds)
 
 
 

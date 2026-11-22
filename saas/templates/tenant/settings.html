@@ -26,7 +26,8 @@
 
         <div class="form-group">
           <label class="form-label">Tenant Slug (Immutable)</label>
-          <input type="text" class="form-control" value="{{ tenant.slug }}" readonly style="font-family: 'JetBrains Mono', monospace; color: var(--gold);">
+          <input type="text" class="form-control" value="{{ tenant.slug }}" readonly
+            style="font-family: 'JetBrains Mono', monospace; color: var(--gold);">
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
@@ -67,7 +68,8 @@
           </div>
           <div class="form-group">
             <label class="form-label">Confirm Password *</label>
-            <input type="password" name="confirm_password" class="form-control" placeholder="Repeat new password" required>
+            <input type="password" name="confirm_password" class="form-control" placeholder="Repeat new password"
+              required>
           </div>
         </div>
 
@@ -91,37 +93,44 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <div class="form-group">
           <label class="form-label">Customer Portal Title</label>
-          <input type="text" name="company_title" class="form-control" value="{{ branding.company_title or 'ISP Billing' }}" required>
+          <input type="text" name="company_title" class="form-control"
+            value="{{ branding.company_title or 'ISP Billing' }}" required>
         </div>
 
         <div class="form-group">
           <label class="form-label">Company Logo URL</label>
-          <input type="url" name="logo_url" class="form-control" value="{{ branding.logo_url or '' }}" placeholder="https://yourisp.com/logo.png">
+          <input type="url" name="logo_url" class="form-control" value="{{ branding.logo_url or '' }}"
+            placeholder="https://yourisp.com/logo.png">
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
           <div class="form-group">
             <label class="form-label">Primary Color</label>
-            <input type="color" name="primary_color" class="form-control" value="{{ branding.primary_color }}" style="height: 42px; padding: 4px;">
+            <input type="color" name="primary_color" class="form-control" value="{{ branding.primary_color }}"
+              style="height: 42px; padding: 4px;">
           </div>
           <div class="form-group">
             <label class="form-label">Secondary Color</label>
-            <input type="color" name="secondary_color" class="form-control" value="{{ branding.secondary_color }}" style="height: 42px; padding: 4px;">
+            <input type="color" name="secondary_color" class="form-control" value="{{ branding.secondary_color }}"
+              style="height: 42px; padding: 4px;">
           </div>
           <div class="form-group">
             <label class="form-label">Accent Color</label>
-            <input type="color" name="accent_color" class="form-control" value="{{ branding.accent_color }}" style="height: 42px; padding: 4px;">
+            <input type="color" name="accent_color" class="form-control" value="{{ branding.accent_color }}"
+              style="height: 42px; padding: 4px;">
           </div>
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
           <div class="form-group">
             <label class="form-label">Customer Support Phone</label>
-            <input type="text" name="support_phone" class="form-control" value="{{ branding.support_phone or '' }}" placeholder="+254 700 000000">
+            <input type="text" name="support_phone" class="form-control" value="{{ branding.support_phone or '' }}"
+              placeholder="+254 700 000000">
           </div>
           <div class="form-group">
             <label class="form-label">Customer Support Email</label>
-            <input type="email" name="support_email" class="form-control" value="{{ branding.support_email or '' }}" placeholder="support@yourisp.com">
+            <input type="email" name="support_email" class="form-control" value="{{ branding.support_email or '' }}"
+              placeholder="support@yourisp.com">
           </div>
         </div>
 
@@ -137,18 +146,21 @@
           <div class="card-desc">Your active COwen ISP SaaS tier</div>
         </div>
         <span class="badge badge-gold">
-          {{ subscription.tier.value | upper if subscription else "STARTER" }}
+          {{ ((subscription.tier.value if subscription.tier.value is defined else subscription.tier) | string | upper)
+          if (subscription and subscription.tier) else "STARTER" }}
         </span>
       </div>
 
       <div style="font-size: 13px; color: var(--text-muted); display: flex; flex-direction: column; gap: 8px;">
         <div style="display: flex; justify-content: space-between;">
           <span>Allowed Routers:</span>
-          <strong style="color: #fff;">{{ subscription.max_routers if subscription else 1 }} Router{{ "s" if (subscription and subscription.max_routers > 1) else "" }}</strong>
+          <strong style="color: #fff;">{{ subscription.max_routers if subscription else 1 }} Router{{ "s" if
+            (subscription and subscription.max_routers > 1) else "" }}</strong>
         </div>
         <div style="display: flex; justify-content: space-between;">
           <span>Monthly Subscription Fee:</span>
-          <strong style="color: #fff;">KES {{ "{:,.2f}".format(subscription.monthly_price_kes) if subscription else "1,000.00" }}</strong>
+          <strong style="color: #fff;">KES {{ "{:,.2f}".format(subscription.monthly_price_kes) if subscription else
+            "1,000.00" }}</strong>
         </div>
         <div style="display: flex; justify-content: space-between;">
           <span>Status:</span>
@@ -156,7 +168,8 @@
         </div>
         <div style="display: flex; justify-content: space-between;">
           <span>Renewal Date:</span>
-          <strong style="color: #fff;">{{ subscription.expires_at.strftime('%B %d, %Y') if (subscription and subscription.expires_at) else "Active" }}</strong>
+          <strong style="color: #fff;">{{ subscription.expires_at.strftime('%B %d, %Y') if (subscription and
+            subscription.expires_at) else "Active" }}</strong>
         </div>
       </div>
 

@@ -490,11 +490,12 @@
             </a>
           </td>
           <td>
-            {% if v.status.value == 'unused' %}
+            {% set v_stat = ((v.status.value if v.status.value is defined else v.status) | string).lower() %}
+            {% if 'unused' in v_stat %}
             <span class="badge badge-online">Ready / Unused</span>
-            {% elif v.status.value == 'active' %}
+            {% elif 'active' in v_stat %}
             <span class="badge badge-provisioning">In Use</span>
-            {% elif v.status.value == 'used' %}
+            {% elif 'used' in v_stat %}
             <span class="badge badge-offline">Completed</span>
             {% else %}
             <span class="badge badge-offline">Expired</span>

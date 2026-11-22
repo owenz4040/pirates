@@ -695,7 +695,19 @@ def build_mikrotik_sync_script_source(
         ':local body \\"\\";',
         ':local status \\"\\";',
         f':do {{ :local res [/tool fetch url=\\"{clean_url}\\" http-method=post http-header-field=\\"{header_val}\\" http-data=\\$info check-certificate=yes-without-crl output=user as-value]; :set status (\\$res->\\"status\\"); :set body (\\$res->\\"data\\"); :log info \\"COwen_Sync: Check-in successful\\"; }} on-error={{ :log warning \\"COwen_Sync: HTTPS fetch failed - check network or TLS certificates\\"; }};',
-        ':if (\\$status = \\"finished\\" and [:len \\$body] >= 16 and [:len \\$body] <= 32768 and [:pick \\$body 0 16] = \\"# COwen-Batch-OK\\") do={ :do { :local run [:parse \\$body]; \\$run; } on-error={ :log warning \\"COwen_Sync: batch command execution error\\" }; };'
+        ':if (\\$status = \\"finished\\") do={'
+        ' :if ([:len \\$body] >= 16 and [:len \\$body] <= 32768 and [:pick \\$body 0 16] = \\"# COwen-Batch-OK\\") do={'
+        ' :local run \\"\\";'
+        ' :do { :set run [:parse \\$body]; } on-error={ :log warning \\"COwen_Sync: script parsing failed - syntax error or truncated response\\"; };'
+        ' :if ([:typeof \\$run] = \\"code\\") do={'
+        ' :do { \\$run; } on-error={ :log warning \\"COwen_Sync: runtime error executing batch commands\\"; };'
+        ' };'
+        ' } else={'
+        ' :if ([:len \\$body] > 0) do={'
+        ' :log warning \\"COwen_Sync: response validation failed - invalid magic header or payload size\\";'
+        ' };'
+        ' };'
+        '};'
     ]
     return " ".join(source_statements)
 
